@@ -77,7 +77,7 @@ jobs:
       - name: Verify PEP 621 console entrypoints
         shell: bash
         run: |
-          python -m pip install --no-deps --no-build-isolation .
+          python -m pip install --no-deps .
           graft-tdb --root graft stats --strict | grep -q "poison gate: OK"
 
       - name: Verify Desktop & plugin ZIP bundle build
