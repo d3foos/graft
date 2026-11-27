@@ -5,7 +5,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+STORE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${STORE_ROOT}/.." && pwd)"
 
 TARGET=""
 SCOPE="global"
@@ -57,19 +58,19 @@ fi
 copy_store() {
   local dest="$1"
   mkdir -p "${dest}/outcomes" "${dest}/sources" "${dest}/tests" "${dest}/assets"
-  cp -R "${REPO_ROOT}/tools" "${dest}/"
-  cp -R "${REPO_ROOT}/vocab" "${dest}/"
-  cp -R "${REPO_ROOT}/techniques" "${dest}/"
-  cp -R "${REPO_ROOT}/probes" "${dest}/"
-  cp -R "${REPO_ROOT}/tests/equiv" "${dest}/tests/"
+  cp -R "${STORE_ROOT}/tools" "${dest}/"
+  cp -R "${STORE_ROOT}/vocab" "${dest}/"
+  cp -R "${STORE_ROOT}/techniques" "${dest}/"
+  cp -R "${STORE_ROOT}/probes" "${dest}/"
+  cp -R "${STORE_ROOT}/tests/equiv" "${dest}/tests/"
   find "${dest}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
   : > "${dest}/outcomes/ledger.jsonl"
   : > "${dest}/sources/.gitkeep"
-  cp "${REPO_ROOT}/sources/README.md" "${dest}/sources/README.md"
+  cp "${STORE_ROOT}/sources/README.md" "${dest}/sources/README.md"
   cp "${REPO_ROOT}/LICENSE" "${dest}/LICENSE"
   cp "${REPO_ROOT}/NOTICE" "${dest}/NOTICE"
-  cp "${REPO_ROOT}/SECURITY.md" "${dest}/SECURITY.md"
-  cp "${REPO_ROOT}/assets/logo.svg" "${dest}/assets/logo.svg"
+  cp "${REPO_ROOT}/.github/SECURITY.md" "${dest}/SECURITY.md"
+  cp "${REPO_ROOT}/skills/graft/assets/logo.svg" "${dest}/assets/logo.svg"
 }
 
 init_store() {

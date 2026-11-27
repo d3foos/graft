@@ -18,9 +18,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+STORE_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = STORE_ROOT.parent
 STORE_DIRS = ("tools", "vocab", "techniques", "probes")
-LEGAL_FILES = ("LICENSE", "NOTICE", "SECURITY.md")
 
 
 def _ignore_junk(_dir: str, names: list[str]) -> set[str]:
@@ -33,15 +33,16 @@ def _ignore_junk(_dir: str, names: list[str]) -> set[str]:
 
 def _copy_store(dst: Path) -> None:
     for sub in STORE_DIRS:
-        shutil.copytree(ROOT / sub, dst / sub, ignore=_ignore_junk)
-    shutil.copytree(ROOT / "tests" / "equiv", dst / "tests" / "equiv", ignore=_ignore_junk)
+        shutil.copytree(STORE_ROOT / sub, dst / sub, ignore=_ignore_junk)
+    shutil.copytree(STORE_ROOT / "tests" / "equiv", dst / "tests" / "equiv", ignore=_ignore_junk)
     (dst / "outcomes").mkdir(parents=True, exist_ok=True)
     (dst / "outcomes" / "ledger.jsonl").write_bytes(b"")
     (dst / "sources").mkdir(parents=True, exist_ok=True)
     (dst / "sources" / ".gitkeep").write_bytes(b"")
-    shutil.copy2(ROOT / "sources" / "README.md", dst / "sources" / "README.md")
-    for name in LEGAL_FILES:
-        shutil.copy2(ROOT / name, dst / name)
+    shutil.copy2(STORE_ROOT / "sources" / "README.md", dst / "sources" / "README.md")
+    shutil.copy2(REPO_ROOT / "LICENSE", dst / "LICENSE")
+    shutil.copy2(REPO_ROOT / "NOTICE", dst / "NOTICE")
+    shutil.copy2(REPO_ROOT / ".github" / "SECURITY.md", dst / "SECURITY.md")
 
 
 def _lock_stage(stage_root: Path) -> None:
@@ -76,9 +77,9 @@ def build_claude_desktop_bundle(out_dir: Path) -> tuple[Path, int, int]:
         stage = Path(tmp) / "graft"
         stage.mkdir()
         _copy_store(stage)
-        shutil.copy2(ROOT / "skills" / "graft" / "SKILL.md", stage / "SKILL.md")
+        shutil.copy2(REPO_ROOT / "skills" / "graft" / "SKILL.md", stage / "SKILL.md")
         (stage / "assets").mkdir(exist_ok=True)
-        shutil.copy2(ROOT / "assets" / "logo.svg", stage / "assets" / "logo.svg")
+        shutil.copy2(REPO_ROOT / "skills" / "graft" / "assets" / "logo.svg", stage / "assets" / "logo.svg")
         _lock_stage(stage)
         dest = out_dir / "graft-claude-desktop-skill.zip"
         files, size = _write_zip(stage, dest)
@@ -90,11 +91,11 @@ def build_codex_skill_bundle(out_dir: Path) -> tuple[Path, int, int]:
         stage = Path(tmp) / "graft"
         stage.mkdir()
         _copy_store(stage)
-        shutil.copy2(ROOT / ".agents" / "skills" / "graft" / "SKILL.md", stage / "SKILL.md")
+        shutil.copy2(REPO_ROOT / ".agents" / "skills" / "graft" / "SKILL.md", stage / "SKILL.md")
         (stage / "agents").mkdir(exist_ok=True)
-        shutil.copy2(ROOT / ".agents" / "skills" / "graft" / "agents" / "openai.yaml", stage / "agents" / "openai.yaml")
+        shutil.copy2(REPO_ROOT / ".agents" / "skills" / "graft" / "agents" / "openai.yaml", stage / "agents" / "openai.yaml")
         (stage / "assets").mkdir(exist_ok=True)
-        shutil.copy2(ROOT / ".agents" / "skills" / "graft" / "assets" / "logo.svg", stage / "assets" / "logo.svg")
+        shutil.copy2(REPO_ROOT / ".agents" / "skills" / "graft" / "assets" / "logo.svg", stage / "assets" / "logo.svg")
         _lock_stage(stage)
         dest = out_dir / "graft-codex-skill.zip"
         files, size = _write_zip(stage, dest)
@@ -106,13 +107,12 @@ def build_antigravity_plugin_bundle(out_dir: Path) -> tuple[Path, int, int]:
         stage = Path(tmp) / "graft"
         stage.mkdir()
         _copy_store(stage)
-        shutil.copytree(ROOT / "tests", stage / "tests", ignore=_ignore_junk, dirs_exist_ok=True)
-        shutil.copytree(ROOT / "skills", stage / "skills", ignore=_ignore_junk)
-        shutil.copytree(ROOT / "rules", stage / "rules", ignore=_ignore_junk)
-        shutil.copytree(ROOT / "assets", stage / "assets", ignore=_ignore_junk)
-        shutil.copytree(ROOT / "scripts", stage / "scripts", ignore=_ignore_junk)
+        shutil.copytree(STORE_ROOT / "tests", stage / "tests", ignore=_ignore_junk, dirs_exist_ok=True)
+        shutil.copytree(REPO_ROOT / "skills", stage / "skills", ignore=_ignore_junk)
+        shutil.copytree(REPO_ROOT / "rules", stage / "rules", ignore=_ignore_junk)
+        shutil.copytree(STORE_ROOT / "scripts", stage / "scripts", ignore=_ignore_junk)
         for doc in ("plugin.json", "README.md", "AGENTS.md", "pyproject.toml"):
-            shutil.copy2(ROOT / doc, stage / doc)
+            shutil.copy2(REPO_ROOT / doc, stage / doc)
         _lock_stage(stage)
         dest = out_dir / "graft-antigravity-plugin.zip"
         files, size = _write_zip(stage, dest)
@@ -121,7 +121,7 @@ def build_antigravity_plugin_bundle(out_dir: Path) -> tuple[Path, int, int]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Build self-contained GRAFT bundles in dist/")
-    ap.add_argument("--out", default=str(ROOT / "dist"), help="output directory (default: dist/)")
+    ap.add_argument("--out", default=str(REPO_ROOT / "dist"), help="output directory (default: dist/)")
     args = ap.parse_args(argv)
     out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)

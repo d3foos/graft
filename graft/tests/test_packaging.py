@@ -11,7 +11,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
-GRAFT = Path(__file__).resolve().parent.parent
+STORE = Path(__file__).resolve().parent.parent
+GRAFT = STORE.parent
 
 ANTIGRAVITY_ALLOWED_KEYS = {
     "name",
@@ -65,7 +66,7 @@ class TestLegalAndProjectMetadata(unittest.TestCase):
         notice = (GRAFT / "NOTICE").read_text(encoding="utf-8")
         self.assertIn("Abdulrahman Almuhairi", notice)
         self.assertIn("AGPL-3.0", notice)
-        sec = (GRAFT / "SECURITY.md").read_text(encoding="utf-8")
+        sec = (GRAFT / ".github" / "SECURITY.md").read_text(encoding="utf-8")
         self.assertIn("offline", sec.lower())
         self.assertIn("authorized", sec.lower())
 
@@ -125,9 +126,8 @@ class TestMultiPlatformManifests(unittest.TestCase):
         self.assertEqual(fm.get("license"), "AGPL-3.0-or-later")
         self.assertTrue(fm.get("description"))
 
-        root_logo = (GRAFT / "assets" / "logo.svg").read_bytes()
-        self.assertEqual(root_logo, (GRAFT / "skills" / "graft" / "assets" / "logo.svg").read_bytes())
-        self.assertEqual(root_logo, (GRAFT / ".agents" / "skills" / "graft" / "assets" / "logo.svg").read_bytes())
+        skill_logo = (GRAFT / "skills" / "graft" / "assets" / "logo.svg").read_bytes()
+        self.assertEqual(skill_logo, (GRAFT / ".agents" / "skills" / "graft" / "assets" / "logo.svg").read_bytes())
 
     def test_no_symlinks_in_repo(self):
         symlinks = [p for p in GRAFT.rglob("*") if p.is_symlink()]
@@ -150,17 +150,17 @@ class TestSanitizationAndBundles(unittest.TestCase):
         self.assertEqual(hits, [], f"Unexpected private/hardcoded strings in: {hits}")
 
     def test_sources_and_outcomes_clean(self):
-        src_files = [p.name for p in (GRAFT / "sources").iterdir() if p.is_file()]
+        src_files = [p.name for p in (STORE / "sources").iterdir() if p.is_file()]
         self.assertEqual(sorted(src_files), [".gitkeep", "README.md"])
-        out_files = [p.name for p in (GRAFT / "outcomes").iterdir() if p.is_file()]
+        out_files = [p.name for p in (STORE / "outcomes").iterdir() if p.is_file()]
         self.assertEqual(out_files, ["ledger.jsonl"])
-        self.assertEqual((GRAFT / "outcomes" / "ledger.jsonl").stat().st_size, 0)
+        self.assertEqual((STORE / "outcomes" / "ledger.jsonl").stat().st_size, 0)
 
     def test_build_bundles_self_contained(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "dist"
             r = subprocess.run(
-                [sys.executable, str(GRAFT / "scripts" / "build-bundles.py"), "--out", str(out)],
+                [sys.executable, str(STORE / "scripts" / "build-bundles.py"), "--out", str(out)],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

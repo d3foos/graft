@@ -21,11 +21,11 @@ metadata:
 ## Store & CLI resolution
 - GRAFT is strictly offline: `tdb` reads local JSON/SQLite only and sends zero network traffic.
 - Locate the GRAFT store root (`<GRAFT_ROOT>`) and invoke `tdb` for your environment:
-  - **Claude Code plugin:** `python3 "${CLAUDE_PLUGIN_ROOT}/tools/tdb.py" --root "${CLAUDE_PLUGIN_ROOT}" <cmd>`
+  - **Claude Code plugin:** `python3 "${CLAUDE_PLUGIN_ROOT}/graft/tools/tdb.py" --root "${CLAUDE_PLUGIN_ROOT}/graft" <cmd>`
   - **Self-contained bundle (`install.sh` / `install.ps1` / Desktop `.zip`):** `tools/tdb.py` sits inside this skill directory (`python <SKILL_DIR>/tools/tdb.py <cmd>`, or `python3` on macOS/Linux).
-  - **Full repository checkout / workspace plugin:** run `python tools/tdb.py <cmd>` from the repository root (`tdb.py` auto-resolves `--root` from `$GRAFT_ROOT`, its parent tree, or the current working directory).
-  - **Installed Python CLI (`pip install .` / `uvx`):** set `GRAFT_ROOT=/path/to/graft` and run `graft-tdb <cmd>` (or `tdb <cmd>`).
-  - **Standalone `SKILL.md`-only install (`npx skills add`):** if `tools/tdb.py` and `vocab/` are not bundled inside `<SKILL_DIR>` or the workspace, clone `https://github.com/d3foos/graft.git` locally and set `GRAFT_ROOT` (or run `scripts/install.sh` / `scripts/install.ps1`).
+  - **Full repository checkout / workspace plugin:** run `python graft/tools/tdb.py <cmd>` from the repository root (`tdb.py` auto-resolves `--root` from `$GRAFT_ROOT`, its parent `graft/` store, or the current working directory).
+  - **Installed Python CLI (`pip install .` / `uvx`):** set `GRAFT_ROOT=/path/to/graft/graft` and run `graft-tdb <cmd>` (or `tdb <cmd>`).
+  - **Standalone `SKILL.md`-only install (`npx skills add`):** if `tools/tdb.py` and `vocab/` are not bundled inside `<SKILL_DIR>` or the workspace, clone `https://github.com/d3foos/graft.git` locally and set `GRAFT_ROOT` (or run `graft/scripts/install.sh` / `graft/scripts/install.ps1`).
 - Signing keys (`$GRAFT_SIGNING_KEY` or `<root>-signing.key`) MUST live **outside** the store directory.
 - Below, `tdb <cmd>` refers to whichever invocation above matches your environment.
 

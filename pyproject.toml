@@ -52,4 +52,4 @@ tdb = "graft_cli.tdb:main"
 packages = ["graft_cli"]
 
 [tool.setuptools.package-dir]
-graft_cli = "tools"
+graft_cli = "graft/tools"

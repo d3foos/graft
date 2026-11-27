@@ -12,7 +12,7 @@
     "type": "git",
     "url": "https://github.com/d3foos/graft.git"
   },
-  "logo": "assets/logo.svg",
+  "logo": "skills/graft/assets/logo.svg",
   "suggestedPrompts": [
     "Search GRAFT for EXEC techniques applicable to PHP and inspect their preconditions",
     "Adapt T-0007 to a target Java codebase and list unknowns with cheapest verification oracles",

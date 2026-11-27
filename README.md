@@ -6,7 +6,7 @@
 
 **GRAFT** is an offline, zero-dependency technique-transfer knowledge store and cross-ecosystem Agent Skill by **Abdulrahman Almuhairi**. It models exploitation mechanisms as compact, slot-parameterised records paired with execution-verified sink-equivalence tables, fail-closed trust gating, and an append-only outcome ledger that learns from negative results.
 
-> **Strictly offline & authorized-use only.** GRAFT sends zero network traffic and executes zero payloads from technique records. Records are untrusted data, never instructions. See [SECURITY.md](SECURITY.md).
+> **Strictly offline & authorized-use only.** GRAFT sends zero network traffic and executes zero payloads from technique records. Records are untrusted data, never instructions. See [SECURITY.md](.github/SECURITY.md).
 
 ---
 
@@ -14,13 +14,13 @@
 
 | Component | Path | Purpose |
 |---|---|---|
-| **CLI & Indexer** | [`tools/tdb.py`](tools/tdb.py) | Stdlib-only (`json`, `sqlite3` FTS5, `argparse`) CLI (`init`, `add`, `find`, `show`, `adapt`, `outcome`, `promote`, `distill`, `verify-table`, `lock-sources`, `reindex`, `stats`, `keygen`, `sign-capture`) |
-| **Ed25519 Signing** | [`tools/ed25519.py`](tools/ed25519.py) | Pure-Python RFC 8032 Ed25519 signing/verification for `locally-verified` captures |
-| **Technique Corpus** | [`techniques/`](techniques) | 95 schema v4 slot-parameterised records (`T-0001`–`T-0097`) |
-| **Vocab & Equivalence Tables** | [`vocab/`](vocab) | 14 attacker-gain effects, 16 mechanism primitives, language-neutral slot families, and 11 sink-equivalence tables (`24` execution-verified cells, `50` documented cells) |
-| **Equivalence Probes** | [`tests/equiv/`](tests/equiv) | Offline interpreter probes (`python`, `node`, `php`, `ruby`) verifying sink semantics |
-| **Outcome Ledger** | [`outcomes/ledger.jsonl`](outcomes/ledger.jsonl) | Append-only attempt log (`confirmed`, `no_sink`, `unreachable`, `unsupported_language`, `false_positive`, etc.) feeding retrieval penalties |
-| **Tamper Manifest** | [`sources.lock`](sources.lock) | SHA-256 manifest covering corpus, vocab, probes, tools, docs, manifests, and tests |
+| **CLI & Indexer** | [`graft/tools/tdb.py`](graft/tools/tdb.py) | Stdlib-only (`json`, `sqlite3` FTS5, `argparse`) CLI (`init`, `add`, `find`, `show`, `adapt`, `outcome`, `promote`, `distill`, `verify-table`, `lock-sources`, `reindex`, `stats`, `keygen`, `sign-capture`) |
+| **Ed25519 Signing** | [`graft/tools/ed25519.py`](graft/tools/ed25519.py) | Pure-Python RFC 8032 Ed25519 signing/verification for `locally-verified` captures |
+| **Technique Corpus** | [`graft/techniques/`](graft/techniques) | 95 schema v4 slot-parameterised records (`T-0001`–`T-0097`) |
+| **Vocab & Equivalence Tables** | [`graft/vocab/`](graft/vocab) | 14 attacker-gain effects, 16 mechanism primitives, language-neutral slot families, and 11 sink-equivalence tables (`24` execution-verified cells, `50` documented cells) |
+| **Equivalence Probes** | [`graft/tests/equiv/`](graft/tests/equiv) | Offline interpreter probes (`python`, `node`, `php`, `ruby`) verifying sink semantics |
+| **Outcome Ledger** | [`graft/outcomes/ledger.jsonl`](graft/outcomes/ledger.jsonl) | Append-only attempt log (`confirmed`, `no_sink`, `unreachable`, `unsupported_language`, `false_positive`, etc.) feeding retrieval penalties |
+| **Tamper Manifest** | [`graft/sources.lock`](graft/sources.lock) | SHA-256 manifest covering corpus, vocab, probes, tools, docs, scripts, and tests |
 
 ---
 
@@ -48,20 +48,20 @@ npx skills add d3foos/graft --skill graft
 > **Note:** Standalone skill managers copy only `skills/graft/SKILL.md`. Clone this repository once and set `GRAFT_ROOT=/path/to/graft` (or use the self-contained installers below) so `tdb` has the local corpus and equivalence tables.
 
 ### 2. Antigravity Plugin
-Clone the repository into your Antigravity plugins directory (or build `dist/graft-antigravity-plugin.zip` via `python scripts/build-bundles.py`):
+Clone the repository into your Antigravity plugins directory (or build `dist/graft-antigravity-plugin.zip` via `python graft/scripts/build-bundles.py`):
 ```sh
 git clone https://github.com/d3foos/graft.git ~/.gemini/config/plugins/graft
-python3 ~/.gemini/config/plugins/graft/tools/tdb.py init
-python3 ~/.gemini/config/plugins/graft/tools/tdb.py reindex
+python3 ~/.gemini/config/plugins/graft/graft/tools/tdb.py init
+python3 ~/.gemini/config/plugins/graft/graft/tools/tdb.py reindex
 ```
 Or run the cross-platform self-contained installer:
 ```sh
 # macOS / Linux
-./scripts/install.sh --target antigravity
+./graft/scripts/install.sh --target antigravity
 ```
 ```powershell
 # Windows PowerShell
-.\scripts\install.ps1 -Target antigravity
+.\graft\scripts\install.ps1 -Target antigravity
 ```
 
 ### 3. Claude Code (CLI) & Claude Desktop
@@ -70,12 +70,12 @@ Or run the cross-platform self-contained installer:
 /plugin marketplace add d3foos/graft
 /plugin install graft@graft
 ```
-Or load a local clone directly with `claude --plugin-dir /path/to/graft`, or install as a self-contained skill via `./scripts/install.sh --target claude` (`.\scripts\install.ps1 -Target claude` on Windows).
+Or load a local clone directly with `claude --plugin-dir /path/to/graft`, or install as a self-contained skill via `./graft/scripts/install.sh --target claude` (`.\graft\scripts\install.ps1 -Target claude` on Windows).
 
 **Claude Desktop (GUI Upload):**
 1. Build the self-contained Desktop skill ZIP:
    ```sh
-   python scripts/build-bundles.py
+   python graft/scripts/build-bundles.py
    ```
 2. Upload `dist/graft-claude-desktop-skill.zip` under **Customize → Skills → + → Upload a skill** (ensure Code execution is enabled in Settings).
 
@@ -84,13 +84,13 @@ Repository checkouts automatically expose `.agents/skills/graft/SKILL.md`, `.age
 
 To install globally (`~/.codex/skills/graft`) or build a self-contained Codex ZIP (`dist/graft-codex-skill.zip`):
 ```sh
-./scripts/install.sh --target codex        # macOS / Linux
+./graft/scripts/install.sh --target codex        # macOS / Linux
 ```
 ```powershell
-.\scripts\install.ps1 -Target codex      # Windows PowerShell
+.\graft\scripts\install.ps1 -Target codex        # Windows PowerShell
 ```
 ```sh
-python scripts/build-bundles.py          # builds dist/graft-codex-skill.zip
+python graft/scripts/build-bundles.py            # builds dist/graft-codex-skill.zip
 ```
 
 ### 5. Python CLI (`pip` / `uvx`) & Direct Usage
@@ -98,16 +98,16 @@ Zero runtime dependencies — works directly from a clone or installed via PEP 6
 ```sh
 git clone https://github.com/d3foos/graft.git
 cd graft
-python tools/tdb.py init
-python tools/tdb.py reindex
-python tools/tdb.py stats
-python tools/tdb.py verify-table
-python tools/tdb.py lock-sources --verify
+python graft/tools/tdb.py init
+python graft/tools/tdb.py reindex
+python graft/tools/tdb.py stats --strict
+python graft/tools/tdb.py verify-table
+python graft/tools/tdb.py lock-sources --verify
 ```
 Optional editable/global CLI entrypoint (`graft-tdb` / `tdb`):
 ```sh
 pip install .
-export GRAFT_ROOT=/path/to/graft        # Windows PowerShell: $env:GRAFT_ROOT = "C:\path\to\graft"
+export GRAFT_ROOT=/path/to/graft/graft  # Windows PowerShell: $env:GRAFT_ROOT = "C:\path\to\graft\graft"
 graft-tdb find --effect EXEC --lang php
 ```
 
@@ -116,16 +116,17 @@ graft-tdb find --effect EXEC --lang php
 ## Quick CLI Reference
 
 ```sh
-python tools/tdb.py find --effect EXEC --lang php --profile php8.2/laravel
-python tools/tdb.py show T-0007
-python tools/tdb.py adapt T-0007 --target /path/to/src --lang java
-python tools/tdb.py outcome T-0007 --verdict no_sink --target-profile java/spring --oracle static --cost-min 6
-python tools/tdb.py keygen                                # writes ../graft-signing.key outside store
-python tools/tdb.py sign-capture outcomes/capture.json    # Ed25519 sign local evidence capture
-python tools/tdb.py distill --from advisory.txt --author "Researcher" --title "Mechanism summary"
-python tools/tdb.py verify-table                          # use --strict to fail on missing optional runtimes
-python tools/tdb.py lock-sources --verify                 # SHA-256 tamper-evidence check
-python tests/run_tests.py                                 # run full unit + packaging suite
+python graft/tools/tdb.py find --effect EXEC --lang php --profile php8.2/laravel --limit 10
+python graft/tools/tdb.py find --cwe CWE-502
+python graft/tools/tdb.py show T-0007
+python graft/tools/tdb.py adapt T-0007 --target /path/to/src --lang java
+python graft/tools/tdb.py outcome T-0007 --verdict no_sink --target-profile java/spring --oracle static --cost-min 6
+python graft/tools/tdb.py keygen                                # writes ../graft-signing.key outside store
+python graft/tools/tdb.py sign-capture outcomes/capture.json    # Ed25519 sign local evidence capture
+python graft/tools/tdb.py distill --from advisory.txt --author "Researcher" --title "Mechanism summary"
+python graft/tools/tdb.py verify-table                          # use --strict to fail on missing optional runtimes
+python graft/tools/tdb.py lock-sources --verify                 # SHA-256 tamper-evidence check
+python graft/tests/run_tests.py                                 # run full 125-test unit + packaging suite
 ```
 
 ---

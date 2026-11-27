@@ -53,35 +53,35 @@ jobs:
       - name: Initialize, reindex, and verify poison gate
         shell: bash
         run: |
-          python tools/tdb.py init
-          python tools/tdb.py reindex
-          STATS_OUT=$(python tools/tdb.py stats --strict)
+          python graft/tools/tdb.py init
+          python graft/tools/tdb.py reindex
+          STATS_OUT=$(python graft/tools/tdb.py stats --strict)
           echo "$STATS_OUT"
           echo "$STATS_OUT" | grep -q "poison gate: OK"
 
       - name: Verify tamper-evident manifest
-        run: python tools/tdb.py lock-sources --verify
+        run: python graft/tools/tdb.py lock-sources --verify
 
       - name: Verify equivalence tables
         run: |
           if [ "${{ matrix.strict-equiv }}" = "true" ]; then
-            python tools/tdb.py verify-table --strict
+            python graft/tools/tdb.py verify-table --strict
           else
-            python tools/tdb.py verify-table
+            python graft/tools/tdb.py verify-table
           fi
         shell: bash
 
       - name: Run full unit and packaging test suite
-        run: python tests/run_tests.py
+        run: python graft/tests/run_tests.py
 
       - name: Verify PEP 621 console entrypoints
         shell: bash
         run: |
           python -m pip install --no-deps --no-build-isolation .
-          graft-tdb --root . stats | grep -q "poison gate: OK"
+          graft-tdb --root graft stats --strict | grep -q "poison gate: OK"
 
       - name: Verify Desktop & plugin ZIP bundle build
         shell: bash
         run: |
-          python scripts/build-bundles.py --out dist
+          python graft/scripts/build-bundles.py --out dist
           ls -lh dist/

@@ -23,7 +23,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$StoreRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$RepoRoot = (Resolve-Path (Join-Path $StoreRoot "..")).Path
 
 $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
 if (-not $PythonCmd) {
@@ -38,10 +39,10 @@ function Copy-GraftStore {
     param([string]$Dest)
     New-Item -ItemType Directory -Force -Path $Dest | Out-Null
     foreach ($sub in @("tools", "vocab", "techniques", "probes")) {
-        Copy-Item -Path (Join-Path $RepoRoot $sub) -Destination $Dest -Recurse -Force
+        Copy-Item -Path (Join-Path $StoreRoot $sub) -Destination $Dest -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path (Join-Path $Dest "tests") | Out-Null
-    Copy-Item -Path (Join-Path $RepoRoot "tests\equiv") -Destination (Join-Path $Dest "tests") -Recurse -Force
+    Copy-Item -Path (Join-Path $StoreRoot "tests\equiv") -Destination (Join-Path $Dest "tests") -Recurse -Force
     Get-ChildItem -Path $Dest -Directory -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
     $outcomes = Join-Path $Dest "outcomes"
@@ -50,11 +51,12 @@ function Copy-GraftStore {
     New-Item -ItemType Directory -Force -Path $outcomes, $sources, $assets | Out-Null
     [System.IO.File]::WriteAllBytes((Join-Path $outcomes "ledger.jsonl"), [byte[]]@())
     [System.IO.File]::WriteAllBytes((Join-Path $sources ".gitkeep"), [byte[]]@())
-    Copy-Item (Join-Path $RepoRoot "sources\README.md") (Join-Path $sources "README.md") -Force
-    foreach ($f in @("LICENSE", "NOTICE", "SECURITY.md")) {
+    Copy-Item (Join-Path $StoreRoot "sources\README.md") (Join-Path $sources "README.md") -Force
+    foreach ($f in @("LICENSE", "NOTICE")) {
         Copy-Item (Join-Path $RepoRoot $f) (Join-Path $Dest $f) -Force
     }
-    Copy-Item (Join-Path $RepoRoot "assets\logo.svg") (Join-Path $assets "logo.svg") -Force
+    Copy-Item (Join-Path $RepoRoot ".github\SECURITY.md") (Join-Path $Dest "SECURITY.md") -Force
+    Copy-Item (Join-Path $RepoRoot "skills\graft\assets\logo.svg") (Join-Path $assets "logo.svg") -Force
 }
 
 function Initialize-GraftStore {

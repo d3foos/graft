@@ -1373,7 +1373,7 @@ def cmd_stats(args, root: Path) -> int:
 
 
 def resolve_default_root() -> Path:
-    """Resolve GRAFT store root: $GRAFT_ROOT > script's parent tree > current working dir."""
+    """Resolve GRAFT store root: $GRAFT_ROOT > script's parent tree > cwd/graft > cwd."""
     env_root = os.environ.get("GRAFT_ROOT", "").strip()
     if env_root:
         return Path(env_root)
@@ -1381,6 +1381,8 @@ def resolve_default_root() -> Path:
     if (script_parent / "vocab" / "effects.json").is_file():
         return script_parent
     cwd = Path.cwd()
+    if (cwd / "graft" / "vocab" / "effects.json").is_file():
+        return cwd / "graft"
     if (cwd / "vocab" / "effects.json").is_file():
         return cwd
     return script_parent

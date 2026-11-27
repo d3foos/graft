@@ -167,7 +167,7 @@ class TestManifestCodeScope(unittest.TestCase):  # R2-3
     def test_tampered_readme_fails_verify(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._locked_root(tmp)
-            p = root / "README.md"
+            p = root / "sources" / "README.md"
             p.write_text(p.read_text(encoding="utf-8") + "\nEVIL\n", encoding="utf-8")
             r = run(root, "lock-sources", "--verify")
             self.assertNotEqual(r.returncode, 0, "a tampered README must fail the manifest")
@@ -188,9 +188,8 @@ class TestManifestCodeScope(unittest.TestCase):  # R2-3
             root = self._locked_root(tmp)
             assert run(root, "lock-sources").returncode == 0
             manifest = json.loads((root / "sources.lock").read_text(encoding="utf-8"))["files"]
-            for needed in ("tools/tdb.py", "tests/test_tdb.py", "tests/test_fix2.py",
-                           "README.md", "skills/graft/SKILL.md", ".agents/skills/graft/SKILL.md",
-                           "LICENSE", "NOTICE", "SECURITY.md", "plugin.json", "pyproject.toml"):
+            for needed in ("tools/tdb.py", "tools/ed25519.py", "tests/test_tdb.py",
+                           "tests/test_fix2.py", "sources/README.md", "scripts/build-bundles.py"):
                 self.assertIn(needed, manifest, f"manifest must cover {needed}")
             self.assertNotIn("drafts", " ".join(manifest), "drafts stay unstaged by design")
 
