@@ -1,0 +1,185 @@
+{
+ "id": "T-0095",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The decoder computes a negative output length for a padded tail, and the negative becomes a full-width store",
+ "index_line": "T-0095 · MEM_WRITE · OpenJDK Base64 intrinsic: stray '=' → negative tail length → 64-byte store into a 50-byte buffer · c · corroborated",
+ "langs": {
+  "origin": "c",
+  "transferable": [
+   "c",
+   "cpp",
+   "rust",
+   "go"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-787",
+   "CWE-190",
+   "CWE-193"
+  ],
+  "capec": [],
+  "effect": "MEM_WRITE",
+  "stage": "impact"
+ },
+ "invariant_violated": "An optimised decoder assumes the remaining output length for a padded group is a small non-negative number: the tail is handled with a mask derived from how many bytes are left. A malformed input makes that count negative, and a negative count converted to a SIMD store mask is not 'no store' — it is every lane.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "attacker-supplied Base64 text (64 payload characters followed by a single '=') reaches a decoding path that uses java.util.Base64"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "after the function is invoked repeatedly the JIT compiles it and the HotSpot x86-64 Base64 intrinsic handles the decode"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "the tail handler computes the output length for the padded group, mishandles the stray '=', and derives a negative length"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "the negative length becomes a full 64-byte store mask against a 50-byte result array, writing 62 bytes past the end with an attacker-chosen constant"
+  },
+  {
+   "n": 5,
+   "primitive": "READ",
+   "does": "with heap shaping, a neighbouring array's length is corrupted and its data copied back into the response — a heap disclosure primitive"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "the bounded constant write is escalated to arbitrary writes that reach the code cache and JVM hooks, yielding code execution"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "Base64 text carried in a request (remember-me cookie, Authorization header, form field, message payload)"
+  },
+  "sink.memory.copy": {
+   "value": "the intrinsic's masked vector store into the decode result buffer"
+  },
+  "size.length": {
+   "value": "the tail output length that goes negative and is reinterpreted as a full-width store mask"
+  },
+  "encoding.string": {
+   "value": "Base64 with a padded tail — the encoding whose padding rule the optimised tail handler special-cases"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "runtime",
+   "expr": "the JVM runs an affected build on an x86-64 CPU with AVX-512 VBMI",
+   "check": {
+    "kind": "shell",
+    "spec": "java -version 2>&1 | head -2; grep -o 'avx512_vbmi' /proc/cpuinfo | head -1"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "a request path reaches java.util.Base64 decoding of attacker-influenced data",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "Base64\\.getDecoder|Base64\\.getMimeDecoder|CookieRememberMeManager|java\\.util\\.Base64"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "reachability",
+   "expr": "the decode path is reachable before authentication in the deployed application",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/; printf 'probe the endpoint that carries Base64 input (cookie/header/form)\\n'"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a heap disclosure in the response after the 65-byte input (64 payload + '=')",
+   "JVM crash with a corrupted object header/array length adjacent to a decode buffer"
+  ],
+  "failure_like": [
+   "the JVM is patched, ARM64-only, or the CPU lacks AVX-512 VBMI (the intrinsic is not used)",
+   "the value is rejected before reaching the intrinsic"
+  ],
+  "false_positive": [
+   "invalid Base64 errors are normal and prove nothing — require the negative-tail path (exact 64+1 shape) and heap effects",
+   "a crash without a disclosure or controlled write is not this record's mechanism"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "hand-rolled SIMD tail handlers: the mask derived from a remaining-count is the classic signedness trap",
+   "the write value is a constant, so the attacker controls location more than content — heap shaping does the rest",
+   "intrinsics bypass the safety expectations of the language method they implement"
+  ],
+  "non_transfers": [
+   "scalar implementations or builds without the AVX-512 VBMI intrinsic",
+   "padded-tail handlers that clamp the remaining count to zero"
+  ],
+  "confidence": {
+   "c": 0.9,
+   "cpp": 0.7,
+   "rust": 0.5,
+   "go": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0010",
+  "T-0096"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "OpenJDK HotSpot x86-64 Base64 intrinsic (CVE-2026-114938, Java4Shell), affected Oracle Java SE / GraalVM builds"
+ },
+ "provenance": [
+  {
+   "src": "sources/b44e4bd9590f327a-java4shell-calif.txt",
+   "author": "Calif.io (Quang Luong)",
+   "sha256": "b44e4bd9590f327ae49049d8a24238399ad840b89dc18e1ff85436d5993c4bb4",
+   "corroborates": "CVE-2026-114938 Java4Shell: the HotSpot x86-64 Base64 intrinsic miscalculates the padded tail store mask; 64 A characters plus a stray = produce a negative output length that becomes a full 64-byte write, 62 bytes past a 50-byte array; heap feng shui turns the constant write into a heap disclosure (JavaBleed) and RCE; pre-auth RCE demonstrated in Jenkins and Keycloak, post-auth in Elasticsearch; requires AVX-512 VBMI"
+  },
+  {
+   "src": "sources/5c3b1ac9b41a2f0c-java4shell-apache-shiro.txt",
+   "author": "Apache Shiro Team",
+   "sha256": "5c3b1ac9b41a2f0cf06318eb7ff051a7633b6f1fd449e937fa202c6d8cdedda3",
+   "corroborates": "independent impact analysis: the flaw is in the OpenJDK HotSpot Base64 decoder, not Shiro; Shiro applications are exposed where a request path reaches java.util.Base64 — notably CookieRememberMeManager decoding the remember-me cookie; exploitation depends on the JDK, AVX-512 VBMI support, and reaching the decoder"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-114938 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-114938 description, affected Java SE/GraalVM versions"
+  },
+  {
+   "src": "https://openjdk.org/groups/vulnerability/advisories/2026-11-17",
+   "author": "OpenJDK Vulnerability Group",
+   "sha256": "",
+   "corroborates": "vendor advisory for the November 2026 CPU including CVE-2026-114938"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

@@ -1,0 +1,179 @@
+{
+  "id": "T-0072",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A personalization endpoint that deserializes page state before it authenticates, and a stolen machine key that outlives the patch",
+  "index_line": "T-0072 \u00b7 EXEC \u00b7 an unauthenticated POST reaches the page-personalization endpoint; the page lifecycle deserializes control state in-process; the machineKey then signs zero-auth persistence \u00b7 dotnet \u00b7 corroborated",
+  "langs": {
+    "origin": "dotnet",
+    "transferable": [
+      "dotnet",
+      "java",
+      "php",
+      "python"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-287",
+      "CWE-502"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "SharePoint's page-personalization endpoints assumed only authenticated users could reach them, and the page lifecycle assumed anything already parsing control state had been let in. Neither survived one crafted unauthenticated POST \u2014 and once the machineKey was read out, patching the code no longer revoked the signature the attacker now owned.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a crafted POST to the layout-personalization endpoint arrives with no session (the observed wave also carried a SignOut.aspx Referer)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the personalization path's access control misses the request \u2014 the endpoint processes an unauthenticated caller (CVE-2025-49706)",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 3,
+      "does": "the page lifecycle parses server-side control state from the request and instantiates attacker-named types in the web application process (CVE-2025-49704) \u2014 the initial RCE needs no file write",
+      "primitive": "DESERIALIZE"
+    },
+    {
+      "n": 4,
+      "does": "the injected objects execute in-process; web shells dropped afterwards are persistence variants, not the mechanism",
+      "primitive": "EXEC"
+    },
+    {
+      "n": 5,
+      "does": "post-exploitation shells read the ASP.NET machineKey/ValidationKey; ysoserial then mints validly-signed __VIEWSTATE payloads \u2014 zero-authentication RCE that survives the patch until keys are rotated",
+      "primitive": "READ"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "the crafted POST body to the layouts endpoint \u2014 page state the lifecycle will deserialize"
+    },
+    "guard.none": {
+      "value": "no check between the personalization surface and the page lifecycle's object instantiation; after key theft, no credential at all \u2014 only a valid signature"
+    },
+    "sink.deser.native": {
+      "value": "the page-lifecycle control-state deserialization in the web application process"
+    },
+    "gadget.magic-method": {
+      "value": "instantiation of attacker-named types (TypeConfuseDelegate-style ViewState gadgets once the key is held)"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the layouts endpoint answers (the platform returns 200 even where files are absent \u2014 treat as surface, not proof)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sk -o /dev/null -w '%{http_code}\\n' https://HOST/_layouts/15/ToolPane.aspx"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "an on-prem build in the vulnerable window, unpatched past 2025-07-08",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sI -X OPTIONS --connect-timeout 5 https://HOST/ | grep -i '^MicrosoftSharePointTeamServices:'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "an ASP.NET machineKey exists in the farm configuration \u2014 the persistence leg depends on it",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "machineKey|__VIEWSTATEGENERATOR|ToolPane\\.aspx"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an unauthenticated POST to the layouts endpoint executes in the web application process (observed: whoami and cmd.exe chains under the w3wp process)",
+      "web shells that print the machineKey configuration fields (ValidationKey/Validation/DecryptionKey/Decryption/CompatibilityMode)",
+      "a ysoserial-signed __VIEWSTATE payload executes commands on any request with zero authentication \u2014 and keeps working after the code is patched, until keys rotate"
+    ],
+    "failure_like": [
+      "the 2025-07-08 patch and the bypass fixes (CVE-2025-53770/53771) applied",
+      "AMSI in Full Mode blocks the unauthenticated in-memory attack path"
+    ],
+    "false_positive": [
+      "valid credentials in use would be a different intrusion \u2014 this chain uses none",
+      "a signed-ViewState PoC without the key presumes what this chain earns first; the record's order is bypass, then deserialization, then key theft"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.deser.native.json"
+    ],
+    "hazards": [
+      "every 'authenticated users only' personalization or maintenance page \u2014 the class is a control-plane surface that parses state before it re-checks identity",
+      "the machineKey is the real persistence: rotate keys and restart IIS after any suspected compromise; patching alone leaves the attacker a valid signer",
+      "adoption was immediate and wide: two named state actors plus a ransomware-deploying cluster exploited it from 2025-07-07; over 400 compromised servers and 8,000+ internet-facing instances at disclosure",
+      "the initial chain runs in-memory with no file drop \u2014 assume other unlogged variants exist"
+    ],
+    "non_transfers": [
+      "the hosted/SaaS variant of the platform (not on-prem)",
+      "farms with the patches applied and keys rotated after every suspected exposure"
+    ],
+    "confidence": {
+      "dotnet": 0.9,
+      "java": 0.6,
+      "php": 0.55,
+      "python": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0007"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Microsoft SharePoint Server on-prem (ToolShell: CVE-2025-49706 + CVE-2025-49704; bypass variants CVE-2025-53770/53771; mass-exploited from 2025-07-07)"
+  },
+  "provenance": [
+    {
+      "src": "sources/000fcec8648aa2cd-eye-sharepoint-under-siege.txt",
+      "author": "Eye Security",
+      "sha256": "000fcec8648aa2cde61237ca8a3da3b0b940bd79a0ec012e683e0df0e6de48f9",
+      "corroborates": "the exploited chain and its correction: ToolShell (CVE-2025-49706 auth bypass + CVE-2025-49704 deserialization RCE, demonstrated at Pwn2Own Berlin by Code White); in-memory execution with no file write; machineKey/ValidationKey theft web shells; ysoserial-signed ViewState persistence surviving patching; 400+ compromised, 8,000+ exposed; 2025-07-29 correction clarifying 53770/53771 are patch bypasses"
+    },
+    {
+      "src": "sources/108f5c0e7dcafff8-microsoft-sharepoint-exploitation.txt",
+      "author": "Microsoft Threat Intelligence",
+      "sha256": "108f5c0e7dcafff8b25ce0b747546e11ddbe9cac7a9b8cb197f8357d6c8bc08d",
+      "corroborates": "vendor account: POST-based exploitation of the ToolPane endpoint from 2025-07-07 by Linen Typhoon, Violet Typhoon and Storm-2603 (Warlock/Lockbit ransomware); spinstall*.aspx shells that retrieve MachineKey data; AMSI Full Mode and machine-key rotation + IIS restart as mitigation; 53770/53771 fix the bypasses of 49704/49706"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-49706 (with CVE-2025-49704) (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2025-49706 (with CVE-2025-49704) description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-07-20 (53770)"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

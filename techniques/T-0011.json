@@ -1,0 +1,49 @@
+{
+  "id": "T-0011", "schema_version": 4, "record_version": 1,
+  "title": "JWT algorithm confusion: the token's own header selects the verification algorithm",
+  "index_line": "T-0011 · AUTH_DECISION · alg:none / RS256→HS256 confusion / kid injection · corroborated",
+  "langs": { "origin": "node", "transferable": ["python", "java", "dotnet", "php", "ruby", "go"] },
+  "class": { "cwe": ["CWE-347"], "capec": [], "effect": "AUTH_DECISION", "stage": "impact" },
+  "invariant_violated": "The app trusts the token's own header to select the verification algorithm and key; the header is attacker-controlled data.",
+  "mechanism": [
+    { "n": 1, "does": "attacker controls the bearer token (captured or self-issued)", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "library reads the alg header before verification", "primitive": "PARSE" },
+    { "n": 3, "does": "bypass: alg:none variants, HS256 signed with the fetched public key, kid traversal/SQL/command, jku/x5u pointing at attacker JWKS", "primitive": "BYPASS", "bypasses": "guard.signature" },
+    { "n": 4, "does": "verification passes with an attacker-chosen key", "primitive": "AUTHZ_CHECK" },
+    { "n": 5, "does": "forged claims accepted: sub/role/admin flipped to administrator", "primitive": "AUTHZ_CHECK" }
+  ],
+  "slots": {
+    "source.http.header": { "value": "Authorization: Bearer <token>" },
+    "encoding.jwt": { "value": "alg:none / None / NONE variants · HS256-with-public-key · kid:'../../../dev/null' · jku:http://attacker/jwks.json" },
+    "guard.signature": { "value": "the accepted-algorithms list — none must not be in it, RS256-only configs resist confusion" },
+    "sink.auth.jwt-verify": { "value": "jwt.verify/decode call site", "equivalents": "vocab/equivalents/sink.auth.jwt-verify.json" },
+    "token.claims": { "value": "sub:'1'|'administrator', role:'admin', admin:true, exp removed or far-future" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "public key or JWKS endpoint reachable (for confusion/jku variants)", "check": { "kind": "grep", "spec": { "patterns": ["\\.well-known/jwks|jwks\\.json|/api/keys|public\\.pem"], "paths": ["src", "app", "routes", "public"] } } },
+    { "kind": "dependency", "expr": "JWT verify call present", "check": { "kind": "grep", "spec": { "patterns": ["jsonwebtoken|jwt\\.verify|jwt\\.decode|express-jwt|jjwt|firebase\\\\JWT|golang-jwt|JWT\\.decode"], "paths": ["src", "app", "routes", "controllers", "lib"] } } },
+    { "kind": "reachability", "expr": "token from request reaches the verify call", "check": { "kind": "grep", "spec": { "patterns": ["Authorization|Bearer|req\\.headers"], "paths": ["src", "app", "routes", "controllers", "middleware"] } } },
+    { "kind": "auth", "expr": "none — the attack targets the token path itself" }
+  ],
+  "observables": {
+    "success": ["forged alg:none token accepted — admin response returned", "HS256 token signed with the public key verifies", "kid:'../../../dev/null' token verifies with empty secret", "claims reflected: role/sub visible in the response or subsequent API behaviour"],
+    "failure_like": ["library rejects alg none (algorithms allowlist set)", "RS256-only configuration rejects the confused HS256 token", "exp enforced — stale forgery refused"],
+    "false_positive": ["token merely DECODED for display without verification", "custom middleware validates separately and catches the forgery"]
+  },
+  "transfer": {
+    "same_effect": ["vocab/equivalents/sink.auth.jwt-verify.json"],
+    "hazards": ["algorithm acceptance is a library-config fact per stack — inspect the actual options passed, not the docs' default", "confusion needs the public key; jku/x5u make it attacker-supplied (SSRF-shaped, see T-0003)"],
+    "non_transfers": ["opaque server-side sessions — no client-verifiable algorithm exists", "mTLS/token-binding schemes"],
+    "confidence": { "node": 0.85, "python": 0.8, "java": 0.75, "dotnet": 0.7, "php": 0.75, "ruby": 0.7, "go": 0.7 }
+  },
+  "combines_with": ["T-0003"],
+  "probes": [ { "kind": "grep", "path": "probes/T-0011/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "sources/2e1257981cb0de01-src_playbook_jwt.txt", "author": "0security playbook corpus", "sha256": "2e1257981cb0de0122c17a212377b8d9008b87ab2b2dbfeb3e54d87e1f6f71bd", "corroborates": "method detail (8 phases: none, confusion, kid, jku/x5u, weak secret)" },
+    { "src": "MITRE CWE-347", "author": "MITRE", "corroborates": "mechanism class (improper verification of cryptographic signature)" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.8 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "low" },
+  "ttl_days": 365
+}

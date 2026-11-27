@@ -1,0 +1,177 @@
+{
+  "id": "T-0053",
+  "schema_version": 4,
+  "record_version": 3,
+  "title": "Privileged-daemon shellout inventory: .dynsym exec-family imports x %s shell templates map the exec surface before any taint analysis",
+  "index_line": "T-0053 \u00b7 EXEC \u00b7 dynsym exec imports x %s shell templates -> ranked exec-sink candidates, static only \u00b7 single-source",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-78",
+      "CWE-88"
+    ],
+    "capec": [],
+    "effect": "EXEC",
+    "stage": "recon"
+  },
+  "invariant_violated": "A shipped image's privileged daemons are assumed reviewed, but nobody has even enumerated which binaries CAN construct shell commands. The invariant that holds: a binary importing the exec family is a candidate sink, and one also carrying %s-bearing shell templates is exactly where network or config data can become argv.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "walk the extracted rootfs and identify every ELF",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 2,
+      "does": "read each ELF's .dynsym and DT_NEEDED: flag importers of system/popen/execve/execl*/posix_spawn",
+      "primitive": "READ"
+    },
+    {
+      "n": 3,
+      "does": "extract printable strings from flagged binaries only",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 4,
+      "does": "match strings containing %s against a shell-token regex (rm/sed/uci/nvram/iptables/tftp/wget/curl/echo/insmod/ifconfig/brctl)",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 5,
+      "does": "classify taint: which flagged binaries are network-facing (bind/recv imports) or auto-started, and which other daemons reference them",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 6,
+      "does": "rank candidates and record the false-positive signature: log-format strings, applet symlink farms, compiled-LuCI split constants",
+      "primitive": "COMPARE"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "network- or config-facing daemon that feeds the template slots"
+    },
+    "sink.exec.shell": {
+      "value": "the %s-bearing shell template family",
+      "equivalents": "vocab/equivalents/sink.exec.shell.json"
+    },
+    "guard.escaping": {
+      "value": "quoting/escaping present (or absent) around the substitution slot"
+    },
+    "encoding.shell": {
+      "value": "metacharacters that survive into the final command line"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "extracted rootfs with intact ELF .dynsym sections",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "pyelftools: ELFFile(...).get_section_by_name('.dynsym') yields symbols"
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "binaries import an exec-family function",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "dynsym scan across extracted rootfs ELFs for system/popen/execve/execl*/posix_spawn"
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "flagged binaries carry %s strings with shell tokens",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "uci set .*%s",
+            "nvram (set|get) %s",
+            "iptables .*%s",
+            "tftp .*%s",
+            "sed -i .*%s",
+            "echo .*%s >"
+          ],
+          "paths": [
+            "flagged binaries"
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "%s templates found in auto-started, non-applet daemons (e.g., 'uci set network.lan.ipaddr=%s', 'nvram set %s=%s', 'iptables %s', 'tftp -gr %s %s &')",
+      "caller strings in peer daemons invoking helper shell scripts with %s"
+    ],
+    "failure_like": [
+      "no templates beyond log/printf formats -> exec surface clean at this depth"
+    ],
+    "false_positive": [
+      "log-format strings that match the shell-token regex but never reach an exec call (e.g., connection-reuse log messages containing 'URL: %s')",
+      "busybox applet symlink farm: one binary counted dozens of times",
+      "compiled-LuCI split constants: literal 'io.popen'/'os.execute' greps return 0 on LuaQ bytecode - the name is two constants"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "a template proves an exec sink, not taint: the %s source needs call-site RE or runtime confirmation",
+      "templates may be dead code paths"
+    ],
+    "non_transfers": [
+      "static binaries without .dynsym (full-binary string scan instead)",
+      "images with stripped string tables"
+    ],
+    "confidence": {
+      "c": 0.8,
+      "cpp": 0.75
+    }
+  },
+  "combines_with": [
+    "T-0005",
+    "T-0014"
+  ],
+  "probes": [
+    {
+      "kind": "static",
+      "path": "probes/T-0053/grep.json"
+    }
+  ],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "embedded Linux / OpenWrt ELF rootfs static exec-surface analysis (CWE-78 / CWE-88)"
+  },
+  "provenance": [
+    {
+      "src": "GRAFT static ELF exec-surface methodology (CWE-78 / CWE-88)",
+      "author": "Abdulrahman Almuhairi",
+      "corroborates": "dynsym exec-importer x %s shell-template sweep methodology and false-positive controls"
+    }
+  ],
+  "trust": "single-source",
+  "confidence": {
+    "curator": 0.8
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "log-format strings and the busybox symlink farm require triage; compiled Lua needs split-constant search"
+  },
+  "ttl_days": 365
+}

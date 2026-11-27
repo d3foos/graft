@@ -1,0 +1,50 @@
+{
+  "id": "T-0003", "schema_version": 4, "record_version": 1,
+  "title": "SSRF guard bypass: redirect TOCTOU, DNS rebind, absolute-URL injection, parser confusion",
+  "index_line": "T-0003 · NET_CONNECT · the guard validates one interpretation, the client acts on another · corroborated",
+  "langs": { "origin": "node", "transferable": ["python", "php", "java", "dotnet", "ruby", "go"] },
+  "class": { "cwe": ["CWE-918"], "capec": [], "effect": "NET_CONNECT", "stage": "impact" },
+  "invariant_violated": "The SSRF guard validates one interpretation of the URL (first hop, first resolution, parsed path) while the HTTP client acts on another.",
+  "mechanism": [
+    { "n": 1, "does": "attacker controls a URL the server will fetch (webhook/avatar/import/preview/baseURL override)", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "guard parses and checks: allowlist, isPrivateIP, scheme filter", "primitive": "NORMALIZE" },
+    { "n": 3, "does": "guard decision made on the initial interpretation", "primitive": "COMPARE" },
+    { "n": 4, "does": "bypass: redirect followed without per-hop revalidation, DNS rebind at connect time, absolute-URL escape from baseURL, or parser confusion (userinfo/backslash/bracket/alt-IP)", "primitive": "BYPASS", "bypasses": "guard.ssrf" },
+    { "n": 5, "does": "client connects to internal service, metadata IP, or attacker host", "primitive": "CONNECT" },
+    { "n": 6, "does": "impact: response content (metadata creds, internal data) or the forwarded Authorization header reaches the attacker", "primitive": "READ" }
+  ],
+  "slots": {
+    "source.http.request": { "value": "url/callback/webhook/avatar/import parameter" },
+    "sink.http.request": { "value": "server-side fetch of the user-influenced URL", "equivalents": "vocab/equivalents/sink.http.request.json" },
+    "guard.ssrf": { "value": "the guard and its bypass class: redirect-policy | resolve-pinning | absolute-URL | parser-confusion" },
+    "encoding.url": { "value": "http://allowed@evil/ · http://evil\\@allowed · 0x7f000001 · trailing dot · [::]" },
+    "header.forwarding": { "value": "does Authorization/bearer follow the cross-origin request? (credential leak flavor)" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "server performs outbound fetches", "check": { "kind": "grep", "spec": { "patterns": ["fetch\\(|axios|urlopen|HttpClient|http\\.Get|curl_exec|Guzzle|requests\\."], "paths": ["src", "app", "routes", "services"] } } },
+    { "kind": "dependency", "expr": "a guard exists in front of the fetch (else it is plain SSRF, not this record)", "check": { "kind": "grep", "spec": { "patterns": ["isPrivateIP|allowlist|allowedHosts|whitelist|ssrf|private.?ip"], "paths": ["src", "app", "lib", "services"] } } },
+    { "kind": "reachability", "expr": "user input reaches the fetch URL", "check": { "kind": "grep", "spec": { "patterns": ["webhook|avatar|import.?url|preview|baseURL|callback|fromUrl"], "paths": ["src", "app", "routes", "services"] } } },
+    { "kind": "auth", "expr": "varies — webhook/import features usually authenticated user" }
+  ],
+  "observables": {
+    "success": ["request observed at a canary host (OAST or controlled listener)", "Authorization/bearer header seen at the canary — credential leak variant", "metadata (169.254.169.254) or internal service content returned", "redirect to internal target followed with no per-hop revalidation"],
+    "failure_like": ["redirect target re-validated per hop — blocked", "DNS resolution pinned at the guard — rebind fails", "exact-host allowlist holds"],
+    "false_positive": ["fixed config URL, not attacker-controlled", "client correctly strips Authorization on cross-origin redirects (not a finding)", "guard re-checks and pins — record verdict and move on"]
+  },
+  "transfer": {
+    "same_effect": ["vocab/equivalents/sink.http.request.json"],
+    "hazards": ["guard primitives differ per runtime (isPrivateIP vs url.Parse vs InetAddress.isSiteLocalAddress) — test the pair, not one side", "cloud metadata ranges differ (169.254.169.254 vs metadata.google.internal)"],
+    "non_transfers": ["no outbound fetch in the app", "egress-filtered deployment (bug present, impact absent)"],
+    "confidence": { "node": 0.9, "python": 0.8, "php": 0.75, "java": 0.75, "dotnet": 0.75, "ruby": 0.75, "go": 0.75 }
+  },
+  "combines_with": [],
+  "probes": [ { "kind": "grep", "path": "probes/T-0003/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "skill:ssrf-bypass", "author": "0security playbook corpus", "corroborates": "method detail + verified wins (openai-node bearer leak, vercel/ai redirect+rebind)" },
+    { "src": "MITRE CWE-918", "author": "MITRE", "corroborates": "mechanism class" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.85 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "medium" },
+  "ttl_days": 365
+}

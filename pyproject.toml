@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Abdulrahman Almuhairi
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graft-tdb"
+version = "1.0.0"
+description = "GRAFT — offline, stdlib-only technique-transfer library and Agent Skill for security research"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+  { name = "Abdulrahman Almuhairi" },
+]
+keywords = [
+  "security",
+  "vulnerability-research",
+  "technique-transfer",
+  "offline",
+  "sqlite",
+  "agent-skills",
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/d3foos/graft"
+Repository = "https://github.com/d3foos/graft.git"
+Issues = "https://github.com/d3foos/graft/issues"
+
+[project.scripts]
+graft-tdb = "graft_cli.tdb:main"
+tdb = "graft_cli.tdb:main"
+
+[tool.setuptools]
+packages = ["graft_cli"]
+
+[tool.setuptools.package-dir]
+graft_cli = "tools"

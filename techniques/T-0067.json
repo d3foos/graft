@@ -1,0 +1,175 @@
+{
+  "id": "T-0067",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "In-place crypto over by-reference pages: a 4-byte scratch write lands in the page cache of any readable file",
+  "index_line": "T-0067 \u00b7 MEM_WRITE \u00b7 AF_ALG + splice() hands page-cache pages into an in-place AEAD; the authencesn scratch write crosses into the file's cached page \u2014 page-cache poisoning to root \u00b7 c \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-787"
+    ],
+    "effect": "MEM_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "Running crypto in place is safe when source and destination are the caller's own buffers. It stopped being safe when splice() handed the kernel page-cache pages by reference: the 'destination' chain then contains pages of an unrelated readable file, and a template's 4-byte scratch write lands in that file's page cache.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unprivileged user binds an AF_ALG aead socket to the authencesn template and supplies attacker-chosen associated data via sendmsg",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "splice() moves pages of an attacker-chosen readable file (/usr/bin/su in the PoC) into the crypto input scatterlist by reference \u2014 no copy",
+      "primitive": "READ"
+    },
+    {
+      "n": 3,
+      "does": "the vulnerable algif_aead operated in place: destination scatterlist set to the same list as source, so the file's page-cache pages sit in the writable destination chain",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 4,
+      "does": "authencesn's 4-byte scratch write at dst[assoclen+cryptlen] crosses the intended output region into a chained page-cache page \u2014 a controlled transient write into the file's page cache",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the corrupted page is consumed by the next read/execve of the file: modified setuid code executes with elevated privilege (su / passwd page-cache poisoning)",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "the AF_ALG socket interface: bind(aead, authencesn(...)) + sendmsg \u2014 unprivileged userspace by design"
+    },
+    "guard.none": {
+      "value": "nothing checked that the destination chain holds only caller-owned pages; in-place operation trusted src==dst safety"
+    },
+    "sink.memory.copy": {
+      "value": "the AEAD template's scratch write beyond the output region into by-reference pages"
+    },
+    "size.length": {
+      "value": "assoclen+cryptlen \u2014 attacker-chosen sizes position the 4-byte scratch write"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "AF_ALG and algif_aead are loadable on the target kernel",
+      "check": {
+        "kind": "shell",
+        "spec": "python3 -c \"import socket; s=socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET); s.bind(('aead','authencesn(hmac(sha256),cbc(aes))')); print('algif_aead loadable')\" 2>&1"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "kernel built between the 2017 in-place commit (72548b093ee3) and the out-of-place fixes; fixed lines: 5.10.254 / 5.15.204 / 6.1.170 / 6.6.137 / 6.12.85 / 6.18.22 / 6.19.12",
+      "check": {
+        "kind": "shell",
+        "spec": "uname -r"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "an unprivileged local account \u2014 no network, no kernel features, no capabilities",
+      "check": {
+        "kind": "shell",
+        "spec": "id -u"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the page cache of the target file changes in memory while the on-disk hash stays identical",
+      "the published 732-byte stdlib Python PoC yields a root shell unmodified across Ubuntu 24.04 / Amazon Linux 2023 / RHEL 10.1 / SUSE 16 \u2014 100% reliable, no race window, no per-distro offsets"
+    ],
+    "failure_like": [
+      "kernel has the out-of-place fix: the scratch write stays inside the destination buffer",
+      "AF_ALG not loadable (non-default config) or algif_aead removed"
+    ],
+    "false_positive": [
+      "the on-disk file hashing clean is NOT safety \u2014 verify the in-memory page; the corruption is transient and disappears on reboot",
+      "binding other aead templates says nothing about this path; the record needs the authencesn + splice composition"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.memory.copy.json"
+    ],
+    "hazards": [
+      "every multi-tenant Linux host in the 2017-to-patch window: CI runners, dev boxes, shell-as-a-service, AI agent sandboxes \u2014 the page cache is shared per host, so one tenant's write crosses container boundaries",
+      "any future in-place optimization over by-reference pages (splice/pipe/vmsplice) repeats the class \u2014 audit which other crypto templates use the destination as scratch",
+      "detection at rest is impossible by design: file-integrity scanners see nothing; the write lives only in memory"
+    ],
+    "non_transfers": [
+      "single-user hosts (post-exploitation step-up only)",
+      "kernels with AF_ALG disabled or the out-of-place revert applied"
+    ],
+    "confidence": {
+      "c": 0.92,
+      "cpp": 0.85
+    }
+  },
+  "combines_with": [],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Linux kernel crypto: algif_aead in-place operation (CVE-2026-31431; PoC copy_fail_exp.py sha256 a567d09b15f6e4440e70c9f2aa8edec8ed59f53301952df05c719aa3911687f9)"
+  },
+  "provenance": [
+    {
+      "src": "sources/f4b185e05ca08157-copyfail-cve-2026-31431.txt",
+      "author": "Xint Code (copy.fail)",
+      "sha256": "f4b185e05ca08157aff3f5ccd3b4c42054e1fb37cf5ad74147456259f252077c",
+      "corroborates": "the finder's disclosure: one logic bug in authencesn chained through AF_ALG and splice() into a 4-byte page-cache write; 100% reliable, every distro since 2017; container-escape primitive; PoC hashes and verified distro matrix"
+    },
+    {
+      "src": "sources/e2ce47d688000614-websec-cve-2026-31431.txt",
+      "author": "Websec (Joel Aviad Ossi)",
+      "sha256": "e2ce47d688000614e60511608637623cf70214e9157f2137d02f3eb953c45a83",
+      "corroborates": "independent root-cause analysis: splice() moves page-cache pages by reference; in-place decryption chained tag pages into the destination; authencesn writes 4 bytes at dst[assoclen+cryptlen] beyond the output boundary; fix = revert to out-of-place (commits 893d22e0135f...); unaffected stable lines"
+    },
+    {
+      "src": "sources/0ef2e80cda2aeb62-xint-copy-fail-distros.txt",
+      "author": "Xint Code",
+      "sha256": "0ef2e80cda2aeb62be84db9a80c0446d5c206cee0d45e5bb43ef1d002fc86bc1",
+      "corroborates": "the technical write-up and per-distribution fix coverage"
+    },
+    {
+      "src": "sources/e436099ef0276422-theori-copyfail-poc.txt",
+      "author": "Theori",
+      "sha256": "e436099ef0276422661791c4f864f637981eb01490b300e937f997e80655a5eb",
+      "corroborates": "published PoC repository linking the exploit and the write-up"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-31431 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2026-31431 description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-05-01"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.92
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

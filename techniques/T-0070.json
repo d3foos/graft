@@ -1,0 +1,194 @@
+{
+  "id": "T-0070",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "Boot-created machine sessions and their embedded credentials: the web layer upgrades a dead session into root execution",
+  "index_line": "T-0070 \u00b7 EXEC \u00b7 replay the boot session for a machine identity, upgrade it with a credential shipped in the image, write a Makeself-marked script, let the privileged updater run it \u00b7 perl \u00b7 corroborated",
+  "langs": {
+    "origin": "perl",
+    "transferable": [
+      "perl",
+      "python",
+      "php",
+      "java",
+      "c"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-798",
+      "CWE-287",
+      "CWE-78"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Appliance boot scripts need to talk to the web layer, so they create real sessions for machine identities and embed those credentials in the shipped image. The web layer assumed a session holder was a legitimate operator \u2014 including an attacker replaying the embedded credential into a boot session that should never have been reachable from outside.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated remote attacker reuses the CGISESSID partial session that boot created for the csm_processes machine identity",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the login path upgrades that session using the hardcoded report:snortrules machine credential shipped in the image \u2014 the web layer now treats the attacker as an authenticated machine operator",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 3,
+      "does": "the upgraded session exposes an sf_action_id valid for that session and accepted by a small set of CGI functions",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 4,
+      "does": "validateLicense (via the sajaxintf callServerFunc RPC) writes attacker-controlled data to the updater's input path, formatted with the vendor's recognized Makeself marker",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the readiness endpoint hands the marked file to the privileged update process, which executes it as root",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.cookie": {
+      "value": "the boot-created CGISESSID machine session, replayed from outside"
+    },
+    "guard.none": {
+      "value": "no rule that machine sessions may never be upgraded from the network \u2014 the credential ships inside the image"
+    },
+    "sink.file.write": {
+      "value": "the validate-license write of attacker data into the privileged updater's input path"
+    },
+    "sink.exec.shell": {
+      "value": "the root-run update process executing the Makeself-marked script"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the appliance management interface is reachable from the attacker's position",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sk -o /dev/null -w '%{http_code}\\n' https://HOST/ui/login"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the boot-created machine session still exists (normal UI activity or session cleanup can remove it \u2014 an affected build is not always exploitable at a given moment)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sk -o /dev/null -w '%{http_code}\\n' -b 'CGISESSID=PROBE' 'https://HOST/login.cgi?logon=Continue'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the shipped image still contains the embedded machine identities/credentials and the privileged updater recognizes the vendor's self-extracting marker",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "csm_processes|snortrules|sf_action_id|Makeself|upgradeReadinessCall"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the session upgrade returns an authenticated page and a session-valid sf_action_id",
+      "a file with the vendor-recognized marker lands in the updater's input path and the updater executes it \u2014 uid=0 confirmed in the independent reproduction",
+      "post-compromise clusters observed by the vendor's threat team: web shells, a JAR command executor, credential exfiltration, and a Cyclops Blink-variant implant"
+    ],
+    "failure_like": [
+      "the boot session was cleaned up \u2014 the chain stops before upgrade on an otherwise affected build",
+      "the March 2026 hotfix / comprehensive release applied, or machine credentials rotated"
+    ],
+    "false_positive": [
+      "reading the login page or a 401 on bad credentials is the baseline, not the bypass \u2014 the machine-session upgrade must answer authenticated",
+      "an sf_action_id alone is an authorization artifact; the record's effect needs the privileged execution leg"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "every appliance that boots machine-identity sessions for its own daemons \u2014 management planes, storage controllers, BMCs; grep the shipped image for embedded credentials before anything else",
+      "the 'validate' function that persists its input is the write primitive, and the vendor's own updater is the execution primitive \u2014 no memory corruption anywhere in the chain",
+      "session lifetime matters: boot-created sessions decay under normal use, so freshly-booted or idle appliances are the softest targets",
+      "when the boot session is gone, the sibling static-credential login (CVE-2026-20316) supplies the low-privilege foothold on the same appliance"
+    ],
+    "non_transfers": [
+      "builds with the hotfix or rotated machine credentials",
+      "products whose daemons do not hold authenticated web sessions"
+    ],
+    "confidence": {
+      "perl": 0.9,
+      "python": 0.6,
+      "php": 0.6,
+      "java": 0.6,
+      "c": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0050"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Cisco Secure Firewall Management Center < March 2026 hotfix (CVE-2026-20079, CVSS 3.1 10.0; actively exploited by state-sponsored and crimeware clusters)"
+  },
+  "provenance": [
+    {
+      "src": "sources/046d37f2562ed233-vulncheck-fmc-2026-20079.txt",
+      "author": "VulnCheck",
+      "sha256": "046d37f2562ed2332c7f8a2e514a9ddd9716d250738c805c7d5694f54263aa0c",
+      "corroborates": "the original public analysis of the chain: boot-created csm_processes session, upgrade via login.cgi with the published report:snortrules machine credential, session-valid sf_action_id, validateLicense write to /var/tmp/license.tmp, Makeself marker, privileged update process executes as root"
+    },
+    {
+      "src": "sources/231c0ac4072143ad-banks-tools-fmc-2026-20079.txt",
+      "author": "Arian Eidizadeh (CyberAuth / banks.tools)",
+      "sha256": "231c0ac4072143ad232a24ae38e0c993b3c23487b85dd2d013b84ae6a17b3801",
+      "corroborates": "independent reproduction on FMC 10.0.1-1 with confirmed uid=0 execution; session-upgrade and callback variations (FIFO/netcat) documented; public Python PoC with fingerprint / bypass-check / bounded root-proof stages"
+    },
+    {
+      "src": "sources/9b7366d631c91b2f-cisco-sa-fmc-authbypass.txt",
+      "author": "Cisco PSIRT (cisco-sa-onprem-fmc-authbypass-5JPp45V2)",
+      "sha256": "9b7366d631c91b2fbc1868a4faafd5e9476cbe66e07a705618c501fee68fd059",
+      "corroborates": "vendor: vulnerability due to an improper system process created at boot time; unauthenticated crafted HTTP requests bypass authentication and execute scripts for root; no workaround"
+    },
+    {
+      "src": "sources/1e867935fdda51f1-talos-fmc-exploitation.txt",
+      "author": "Cisco Talos",
+      "sha256": "1e867935fdda51f1b56f18514b633a8b2a6d2948b4da72c9969456aea394f735",
+      "corroborates": "active exploitation tracking: three clusters using CVE-2026-20079 \u2014 web shells, JAR command executor, credential exfiltration; a Netcat reverse shell cluster deploying a Cyclops Blink variant attributed to Sandworm; a ransomware operator cluster"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-20079 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2026-20079 description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-09-09"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

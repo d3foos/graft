@@ -1,0 +1,192 @@
+{
+ "id": "T-0088",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The updater treats whatever the update channel returns as an authorized release, so redirecting the channel decides what every client installs",
+ "index_line": "T-0088 · EXEC · update manifest + installer fetched and run without signature or certificate verification · cpp · corroborated",
+ "langs": {
+  "origin": "cpp",
+  "transferable": [
+   "cpp",
+   "c",
+   "dotnet",
+   "java",
+   "python",
+   "node",
+   "go"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-494",
+   "CWE-345",
+   "CWE-829"
+  ],
+  "capec": [],
+  "effect": "EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "The updater assumed that an update fetched from its configured update host is authentic because it came from that host. Nothing in the chain proved that: the manifest carried no signature and the installer's publisher was never checked, so control of the channel — not the vendor's signing key — decided what code every client would run.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "the client asks its configured update host for available versions and receives a manifest"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the updater parses the XML manifest and reads the download URL and version it names"
+  },
+  {
+   "n": 3,
+   "primitive": "LOOKUP",
+   "does": "the installer is fetched from whatever host the manifest names — no pinned origin, no signature over the manifest"
+  },
+  {
+   "n": 4,
+   "primitive": "COMPARE",
+   "does": "the downloaded installer's signer/certificate is never compared against the vendor's expected identity (the check that the fix adds)"
+  },
+  {
+   "n": 5,
+   "primitive": "WRITE",
+   "does": "the installer is written to disk and launched"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "the attacker's installer runs with the user's privileges, so a redirected update becomes code execution on every targeted client"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "the update check/download: the manifest and installer come from a URL the client trusts by configuration"
+  },
+  "guard.signature": {
+   "value": "the absent signature/certificate verification of manifest and installer (CWE-494)"
+  },
+  "delegate.tool": {
+   "value": "the updater as a delegate that runs whatever installer it fetched"
+  },
+  "sink.exec.shell": {
+   "value": "the launched installer executing with the user's privileges"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the installed version predates 8.8.9 (WinGUp without certificate/signature verification)",
+   "check": {
+    "kind": "shell",
+    "spec": "ls -l /usr/bin/notepad++ 2>/dev/null; reg query 'HKLM\\\\Software\\\\Notepad++' //v Version 2>/dev/null || printf 'check Help > About or the WinGUp exe version\\n'"
+   }
+  },
+  {
+   "kind": "reachability",
+   "expr": "the client can reach its update channel and the channel can be controlled or redirected",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code} %{url_effective}\\n' -L http://HOST/update/getDownloadUrl.php"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the updater does not verify a signature over the manifest",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "getDownloadUrl|WinGUp|XMLDSig|signature"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "the updater installs an installer whose publisher does not match the vendor",
+   "the update request is served by a host other than the configured one and the install still proceeds"
+  ],
+  "failure_like": [
+   "the updater rejects the manifest because its signature does not verify (8.8.9+ behaviour for the installer, 8.9.2+ for XMLDSig)",
+   "the installer's certificate is not the expected publisher"
+  ],
+  "false_positive": [
+   "an unsigned local build installed manually is not this bug — the vulnerable path is the automatic update check",
+   "a redirect to a CDN with a valid vendor-signed installer is normal update delivery"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every self-updating desktop app, agent, and appliance: the update channel is an unauthenticated code path by construction",
+   "hosting compromise and traffic redirection are enough; the software's own code need not be vulnerable",
+   "detection is asymmetric: the install is legitimate-looking and the vendor may not see the redirected subset"
+  ],
+  "non_transfers": [
+   "updaters that verify a signature over both manifest and payload against a pinned key",
+   "updates delivered only through a package manager with its own repository signatures"
+  ],
+  "confidence": {
+   "cpp": 0.85,
+   "c": 0.75,
+   "dotnet": 0.75,
+   "java": 0.7,
+   "python": 0.7,
+   "node": 0.7,
+   "go": 0.65
+  }
+ },
+ "combines_with": [
+  "T-0038",
+  "T-0058",
+  "T-0081"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Notepad++ before 8.8.9, WinGUp updater (CVE-2025-15556)"
+ },
+ "provenance": [
+  {
+   "src": "sources/759c52682ad83d1e-notepadpp-wingup-vulncheck.txt",
+   "author": "VulnCheck",
+   "sha256": "759c52682ad83d1e8f43e5000d977e8a30c7ae6507a05a22960a3f227132e387",
+   "corroborates": "CVE-2025-15556 (CWE-494): WinGUp downloaded update metadata and installers are not cryptographically verified; an attacker able to intercept or redirect update traffic causes the updater to download and execute an attacker-controlled installer with the user privileges"
+  },
+  {
+   "src": "sources/e12fa671bd8736ce-notepadpp-incident-vendor.txt",
+   "author": "Notepad++ (Don Ho, incident advisory)",
+   "sha256": "e12fa671bd8736cec05d6d3b5c29498a4b629ebfa89f85853c03dd52f8d23838",
+   "corroborates": "vendor account of the resulting hijack: hosting-level compromise let actors redirect update traffic for targeted users to attacker-controlled manifests; WinGup was enhanced in v8.8.9 to verify both certificate and signature of the downloaded installer, the update XML is now XMLDSig-signed, and attackers specifically targeted the domain to exploit insufficient update verification controls"
+  },
+  {
+   "src": "MITRE/NVD CVE-2025-15556 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2025-15556 description and CWE-494"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

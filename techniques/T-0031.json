@@ -1,0 +1,227 @@
+{
+  "id": "T-0031",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "Parallel dispatch arrays desync on a validation failure, so a request is validated against one route and executed by another",
+  "index_line": "T-0031 \u00b7 SQL_EXEC \u00b7 batch router appends a failure to one array and not the other \u2192 handler from a different sub-request runs \u00b7 php/all-batch-APIs \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php",
+      "node",
+      "python",
+      "ruby",
+      "java"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-436",
+      "CWE-89"
+    ],
+    "effect": "SQL_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A batch endpoint assumes that the request it validated is the request it executes, because both are kept in the same loop. But the resolved handler and the validation result live in two parallel arrays: on a validation failure only one of them gets an entry, and every later sub-request is then dispatched with the wrong handler \u2014 validation happened against the route the attacker named, execution happened under a route that never saw those parameters.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated request posts a batch of sub-requests, nesting a second batch inside the first",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the dispatcher resolves each sub-request to a route and handler, appending to a matches list, and separately collects validation results",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "one sub-request fails validation: its error is pushed onto the results list but no handler entry is added, so the two lists no longer share an index",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "a later sub-request is dispatched using the handler resolved for a different sub-request \u2014 nothing enforces the validation-to-handler binding \u2014 and that handler maps its parameter into a query variable the *validating* route never declared, so no validation applies to it",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 5,
+      "does": "a parameter supplied as a string is interpolated into a NOT IN (...) clause, while the array form would have been cast to integers",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 6,
+      "does": "the query executes and a time- or boolean-based oracle leaks rows the unauthenticated caller could never read",
+      "primitive": "READ"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the batch envelope plus its sub-requests \u2014 the payload is the *shape* of the batch (nested, ordering of the failing sub-request) not a payload string"
+    },
+    "sink.sql.concat": {
+      "value": "the query variable the displaced handler maps the attacker's parameter into (a NOT IN list is the classic)"
+    },
+    "guard.none": {
+      "value": "the binding between 'the route whose validator accepted this sub-request' and 'the handler that runs it' \u2014 nothing enforces it"
+    },
+    "encoding.string": {
+      "value": "the type confusion half: the same parameter is safe as an array (cast to ints) and injectable as a string"
+    },
+    "oracle.timing": {
+      "value": "time-based delay as the extraction channel, because the attacker is unauthenticated and gets no output"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a batch/multi-call endpoint exists that resolves sub-requests to handlers in a loop",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "serve_batch|batch_request|/batch|multi_call|multicall|bulk"
+          ],
+          "paths": [
+            "src",
+            "includes",
+            "lib",
+            "app",
+            "routes"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the code keeps the resolved handler and the validation result in separate parallel arrays",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "\\$matches\\[|\\$validation\\[|matches\\.push|errors\\.push"
+          ],
+          "paths": [
+            "src",
+            "includes",
+            "lib"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "a sink-vulnerable handler exists that accepts a parameter the *validating* route does not register \u2014 that gap is what the desync buys",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "__not_in|NOT IN|args\\[['\\\"]?(exclude|not_in)",
+            "register_rest_route|add_route|@app\\.route"
+          ],
+          "paths": [
+            "src",
+            "includes",
+            "lib",
+            "app"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "platform version is inside the affected range",
+      "check": {
+        "kind": "shell",
+        "spec": "grep -m1 \"wp_version =\" wp-includes/version.php 2>/dev/null || git describe --tags 2>/dev/null"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a sub-request naming a route that does not accept the parameter still reaches the handler that uses it",
+      "a time-based delay appears only when the batch contains a preceding failing sub-request \u2014 that ordering is the proof of the desync",
+      "the response for the displaced sub-request is shaped like the other handler's output, not the one that was called"
+    ],
+    "failure_like": [
+      "the dispatcher rejects the whole batch when any sub-request fails to validate",
+      "the handler is resolved and validation results are kept in one record per sub-request \u2014 then indices cannot diverge"
+    ],
+    "false_positive": [
+      "a validation error that merely echoes the parameter \u2014 that is the validator working",
+      "a delay from a slow endpoint rather than from an injected sleep: calibrate with a baseline request and a non-batch control",
+      "an injection that also works without the batch \u2014 then it is T-0001 and the desync is not needed"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.sql.concat.json"
+    ],
+    "hazards": [
+      "this is a *dispatcher* bug, not a SQL bug; the same desync gives XSS, SSRF or LFI depending on which handler gets displaced \u2014 pick the highest-impact reachable handler",
+      "the trigger is an ordering constraint (a failing sub-request must come before the useful one), so probes that send a single clean sub-request will always look negative",
+      "type-dependent sanitisation (safe as array, injectable as string) is a second, independent defect \u2014 report both halves",
+      "batch and multi-call APIs are under-tested because each sub-request looks individually validated"
+    ],
+    "non_transfers": [
+      "batch implementations that carry one object per sub-request (route, handler, validation) instead of parallel arrays",
+      "endpoints where a failed sub-request aborts the batch"
+    ],
+    "confidence": {
+      "php": 0.85,
+      "node": 0.6,
+      "python": 0.6,
+      "ruby": 0.55,
+      "java": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0001",
+    "T-0012"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "WordPress 6.9.0\u20136.9.4 / 7.0.0\u20137.0.1 wp2shell chain: CVE-2026-63030 (route confusion) + CVE-2026-60137 (author__not_in SQLi)"
+  },
+  "provenance": [
+    {
+      "src": "sources/030d19a65e387544-wp-63030-damonsec.txt",
+      "author": "damonsec.com lab reproduction (CVE-2026-63030 + CVE-2026-60137 wp2shell)",
+      "sha256": "030d19a65e38754442c0922b5a6c3a95a8c88ed0a6576e18b9624b0f8889fdba",
+      "corroborates": "the exact array desync in serve_batch_request_v1, the nested-batch trigger, the string-vs-array cast, and a lab reproduction to a verified admin account"
+    },
+    {
+      "src": "https://github.com/WordPress/wordpress-develop/security/advisories/GHSA-ff9f-jf42-662q",
+      "author": "WordPress Security Team (GHSA-ff9f-jf42-662q, found by Adam Kues / Assetnote)",
+      "corroborates": "REST API batch-route confusion, the link to the SQLi half (GHSA-fpp7-x2x2-2mjf), and the fixed versions"
+    },
+    {
+      "src": "https://wordpress.org/news/2026/07/wordpress-7-0-2-release/",
+      "author": "WordPress Security Team (7.0.2 release notes)",
+      "corroborates": "vendor confirmation and fixed releases 7.0.2 / 6.9.5"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-63030 / CVE-2026-60137 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-436 interpretation conflict and CWE-89; affected version ranges"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "both halves actively exploited; CVE-2026-63030 KEV added 2026-07-21 with SSVC automatable=yes; CVE-2026-60137 KEV added 2026-07-21"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

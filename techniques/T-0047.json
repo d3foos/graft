@@ -1,0 +1,173 @@
+{
+  "id": "T-0047",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A privilege boundary that chroots still resolves identity from inside the chroot the caller controls",
+  "index_line": "T-0047 \u00b7 EXEC \u00b7 sudo -R enters a user-made tree, then reads nsswitch.conf from it and dlopens the module it names \u00b7 c \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-829",
+      "CWE-269"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Switching into a chroot is treated as *containment*: the process is fenced, so what it finds inside is the caller's to arrange and nobody else's business. But privilege logic runs *after* the fence goes up \u2014 the identity lookups that decide who the caller is resolve through files inside the chroot, and one of those files names a shared library to load, as root.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a local user builds a directory containing their own `etc/nsswitch.conf` and a shared object it names",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the privileged tool is invoked with its chroot option pointed at that directory",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the chroot is applied before the identity/policy lookups run, so those lookups resolve inside the caller's tree",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 4,
+      "does": "the NSS configuration selects the caller's module by path, and the loader opens it with the tool's privileges",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 5,
+      "does": "the module's initialiser runs as root before any policy decision is reached",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.env": {
+      "value": "a directory the caller owns and can populate \u2014 the input is a *filesystem layout*, not a string"
+    },
+    "fs.path.join": {
+      "value": "chroot-relative resolution: the same path string means one file to the tool and another to the caller"
+    },
+    "guard.none": {
+      "value": "the ordering itself is the missing guard \u2014 resolution happens after the fence, not before it"
+    },
+    "sink.eval": {
+      "value": "the dynamic loader opening a path named by configuration, with elevated privileges"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the sudo build is in the affected range (the chroot-option change landed in 1.9.14; fixed in 1.9.17p1)",
+      "check": {
+        "kind": "shell",
+        "spec": "sudo -V | head -2; id -u"
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "the sudoers policy permits the chroot option for the invoking user",
+      "check": {
+        "kind": "shell",
+        "spec": "sudo -l | grep -iE 'chroot|ALL' | head"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the caller can create a directory tree and a shared object inside it",
+      "check": {
+        "kind": "shell",
+        "spec": "mkdir -p /tmp/c/etc && echo ok > /tmp/c/etc/nsswitch.conf && echo writable"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a local unprivileged user gets a root shell without a password",
+      "the process tree shows a module loaded from a path under the user's directory while running as root",
+      "the timing is instant \u2014 there is no race to win, the ordering is deterministic"
+    ],
+    "failure_like": [
+      "the build predates the chroot-option change, or the sudoers rule does not permit chroot",
+      "the tool drops privileges, or resolves identity before applying the chroot"
+    ],
+    "false_positive": [
+      "a user who already had a sudo right to the command \u2014 check `sudo -l` first",
+      "a crash when the module fails to load: the attempt reached the loader, which is the precondition, not the win"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.eval.json"
+    ],
+    "hazards": [
+      "the audit question is ordering: which privileged lookups happen *after* an attacker-influenced context switch (chroot, namespace, cwd, mount)",
+      "any chroot/namespace/journal option that takes a path from the caller is a candidate \u2014 the fence does not make the contents trusted",
+      "NSS, PAM, ld.so.preload and locale modules are all 'configuration that names a library'; each is the same bug with a different file",
+      "this is not a race and not an injection: nothing is concatenated, nothing is raced. The defect is sequence"
+    ],
+    "non_transfers": [
+      "tools that resolve identity before entering the caller-supplied context",
+      "builds without the chroot option, or policies that never grant it"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "cpp": 0.8
+    }
+  },
+  "combines_with": [
+    "T-0036",
+    "T-0027"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "sudo 1.9.14\u20131.9.17 with the chroot option permitted (CVE-2025-32463), fixed 1.9.17p1"
+  },
+  "provenance": [
+    {
+      "src": "sources/4fe6dbe743bd7864-sudo-secpos.txt",
+      "author": "SecPod research on CVE-2025-32462 / CVE-2025-32463",
+      "sha256": "4fe6dbe743bd7864d9ce26e02ddda64c28bdd272aea1a4700b9810c5154ff031",
+      "corroborates": "the 1.9.14 change, the user-created /etc/nsswitch.conf under the chroot, the arbitrary shared-object load, and affected distros"
+    },
+    {
+      "src": "https://www.sudo.ws/security/advisories/chroot_bug/",
+      "author": "sudo project (vendor advisory, Todd Miller)",
+      "corroborates": "root cause and the fixed release"
+    },
+    {
+      "src": "https://ubuntu.com/security/notices/USN-7604-1",
+      "author": "Ubuntu Security Team",
+      "corroborates": "independent distribution analysis: 'incorrectly handled the chroot option \u2026 run arbitrary commands as root'"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-32463 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'/etc/nsswitch.conf from a user-controlled directory is used with the --chroot option'; CWE-829"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-09-29; EPSS 0.563"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

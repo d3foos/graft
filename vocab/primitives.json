@@ -1,0 +1,22 @@
+{
+  "version": 4,
+  "note": "Mechanism-step vocabulary. BYPASS steps MUST carry a `bypasses` field naming the guard family they defeat (e.g. bypasses: guard.waf), drawn from vocab/slot_families.json.",
+  "primitives": {
+    "UNTRUSTED_INPUT": "Attacker-controlled data enters the system.",
+    "NORMALIZE": "The system parses/normalizes the input (URL, encoding, format).",
+    "PARSE": "Input is interpreted by a parser (SQL, template, binary, protocol).",
+    "CONCAT": "Input is spliced into a larger string/command/structure.",
+    "LOOKUP": "Input selects a lookup target (column, key, path).",
+    "DESERIALIZE": "Input names types that the runtime instantiates.",
+    "CALLBACK": "Attacker-influenced data causes a callback/method dispatch.",
+    "INVOKE": "The runtime invokes attacker-influenced code.",
+    "EXEC": "A command/subprocess runs.",
+    "READ": "Data is read from a location the attacker influenced.",
+    "WRITE": "Data is written to a location the attacker influenced.",
+    "CONNECT": "A network connection is made to an attacker-influenced target.",
+    "COMPARE": "A comparison/decision happens on attacker-influenced state.",
+    "AUTHZ_CHECK": "An authorization/validity check is evaluated.",
+    "SANITIZE": "The system attempts to neutralize the input.",
+    "BYPASS": "A guard/defense is defeated — REQUIRES a `bypasses` field naming the guard family."
+  }
+}

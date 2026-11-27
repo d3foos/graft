@@ -1,0 +1,29 @@
+{
+  "kind": "grep",
+  "technique": "T-0004",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "jinja2|mako|twig|smarty|freemarker|velocity|handlebars|ejs|nunjucks|ERB",
+    "render\\s*\\(|Template\\s*\\(|Environment\\(|ERB\\.new",
+    "req\\.(query|body|params)",
+    "\\$_(GET|POST|REQUEST)",
+    "request\\.(GET|POST)"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "family": "sink.sql.concat",
+  "effect": "SQL_EXEC",
+  "rev": 2,
+  "note": "String-built SQL reaching a driver. Identifier positions (ORDER BY, column names) cannot be bound in ANY dialect — that surface is the structural variant (T-0002).",
+  "cells": {
+    "python": {
+      "sinks": [{"name": "cursor.execute(f\"…\") / execute('… %s' % …)"}, {"name": "Django .raw()/.extra()"}],
+      "patterns": ["execute\\s*\\(\\s*f['\"]", "execute\\s*\\(\\s*['\"][^'\"]*%s", "\\.raw\\s*\\(", "\\.extra\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/py_sql_concat.py", "what": "concatenated quote reaches the sqlite parser (syntax error) while parameterized form rejects; sqlite3 stdlib", "date": "2026-11-20", "box": "python 3.12.3"}
+    },
+    "php": {
+      "sinks": [{"name": "PDO::query / mysqli_query on built string"}],
+      "patterns": ["->query\\s*\\(", "mysqli_query", "\\$sql\\s*\\.="],
+      "verified": {"how": "documented", "source": "PHP docs (no pdo_sqlite driver in this box)", "needs_local_verification": true}
+    },
+    "node": {
+      "sinks": [{"name": "mysql connection.query(`…${…}`)"}],
+      "patterns": ["\\.query\\s*\\(\\s*`", "\\.query\\s*\\(\\s*f['\"]", "mysql"],
+      "verified": {"how": "documented", "source": "mysql/mysql2 docs", "needs_local_verification": true}
+    },
+    "java": {
+      "sinks": [{"name": "Statement.execute on built string"}, {"name": "MyBatis ${} interpolation"}],
+      "patterns": ["createStatement", "\\$\\{"],
+      "verified": {"how": "documented", "source": "JDBC/MyBatis docs", "needs_local_verification": true}
+    },
+    "dotnet": {
+      "sinks": [{"name": "SqlCommand on built string"}, {"name": "Dapper interpolated strings"}],
+      "patterns": ["SqlCommand", "string\\.Format\\s*\\([^\"]*select", "\\$\"[^\"]*SELECT"],
+      "verified": {"how": "documented", "source": "ADO.NET docs", "needs_local_verification": true}
+    },
+    "ruby": {
+      "sinks": [{"name": "ActiveRecord .where(\"…#{…}\")"}],
+      "patterns": ["\\.where\\s*\\(\\s*['\"]"],
+      "verified": {"how": "documented", "source": "Rails docs", "needs_local_verification": true}
+    },
+    "go": {
+      "sinks": [{"name": "db.Query(fmt.Sprintf(…))"}, {"name": "GORM .Raw(…)"}],
+      "patterns": ["fmt\\.Sprintf\\s*\\([^\")]*SELECT", "\\.Raw\\s*\\("],
+      "verified": {"how": "documented", "source": "database/sql docs", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["dialect-specific delay/exfil functions (SLEEP/pg_sleep/WAITFOR) change the blind oracle per DB", "ORM quoting helpers differ per language — grep the ORM's raw-query escape hatch"],
+  "non_transfers": ["fully parameterized code paths", "rust sqlx compile-time-checked macros"]
+}

@@ -1,0 +1,49 @@
+{
+  "id": "T-0004", "schema_version": 4, "record_version": 1,
+  "title": "SSTI: user input rendered as template code, escalated to RCE per engine",
+  "index_line": "T-0004 · TEMPLATE_EVAL · {{7*7}} polyglot first, engine chain second · corroborated",
+  "langs": { "origin": "python", "transferable": ["php", "node", "java", "dotnet", "ruby"] },
+  "class": { "cwe": ["CWE-1336"], "capec": [], "effect": "TEMPLATE_EVAL", "stage": "impact" },
+  "invariant_violated": "The app treats user input as template data; the engine evaluates it as template code.",
+  "mechanism": [
+    { "n": 1, "does": "user-controlled string reaches a render call", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "engine parses the string as a template", "primitive": "PARSE" },
+    { "n": 3, "does": "engine evaluates the expression — polyglot probe {{7*7}}/${7*7}/<%= 7*7 %> confirms", "primitive": "INVOKE" },
+    { "n": 4, "does": "engine sandbox/filter defeated via attr notation, hex escapes, {%print%} forms", "primitive": "BYPASS", "bypasses": "guard.sandbox" },
+    { "n": 5, "does": "engine-specific escape chain reaches os/Runtime exec", "primitive": "EXEC" }
+  ],
+  "slots": {
+    "source.http.request": { "value": "any input reflected into a render call (name, template field, filename in a rendered page)" },
+    "sink.template.render": { "value": "render(user_string)", "equivalents": "vocab/equivalents/sink.template.render.json" },
+    "encoding.template": { "value": "{{7*7}} (Jinja2/Twig/Nunjucks) · ${7*7} (Freemarker/Velocity/Mako) · <%= 7*7 %> (ERB/EJS) · #set (Velocity) · __${…}__ (Thymeleaf URLs)" },
+    "guard.sandbox": { "value": "engine sandbox or output filter if present" },
+    "gadget.engine-escape": { "value": "Jinja2 config.__class__ chain · Twig 1.x registerUndefinedFilterCallback / Twig 3 filter('system') · Freemarker ?new Execute · Velocity $class.forName reflection" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "template engine in the dependency tree", "check": { "kind": "grep", "spec": { "patterns": ["jinja2|mako|twig|smarty|freemarker|velocity|handlebars|ejs|nunjucks|ERB"], "paths": ["requirements.txt", "package.json", "composer.json", "pom.xml", "Gemfile"] } } },
+    { "kind": "dependency", "expr": "render call present", "check": { "kind": "grep", "spec": { "patterns": ["render\\s*\\(|Template\\s*\\(|Environment\\(|ERB\\.new"], "paths": ["src", "app", "routes", "views", "templates"] } } },
+    { "kind": "reachability", "expr": "request input reaches the render call", "check": { "kind": "grep", "spec": { "patterns": ["req\\.(query|body|params)", "\\$_(GET|POST|REQUEST)", "request\\.(GET|POST)"], "paths": ["src", "app", "routes", "controllers"] } } },
+    { "kind": "auth", "expr": "varies — often low; render surfaces are frequently public" }
+  ],
+  "observables": {
+    "success": ["computed output (49) reflected in the response", "OOB callback or >=5s delay via popen('sleep 5') in the escape chain", "engine-specific fingerprint probe answered ({{config}} vs {{dump()}} vs ${.version})"],
+    "failure_like": ["autoescape renders the probe literally ({{7*7}} visible as text)", "input reaches a static template — rendered, not evaluated"],
+    "false_positive": ["client-side templating only — rendered in the browser, not the server", "the 49 comes from the app's own arithmetic, not the engine"]
+  },
+  "transfer": {
+    "same_effect": ["vocab/equivalents/sink.template.render.json"],
+    "hazards": ["sandboxed engines need the attribute-chain escape — fingerprint the engine AND its sandbox version", "Java engines need the gadget classes reachable from template context"],
+    "non_transfers": ["go text/template — method calls on passed types, no expression eval", "rust — no mainstream server template eval"],
+    "confidence": { "python": 0.85, "php": 0.8, "node": 0.8, "java": 0.8, "dotnet": 0.7, "ruby": 0.8 }
+  },
+  "combines_with": ["T-0008"],
+  "probes": [ { "kind": "grep", "path": "probes/T-0004/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "skill:ssti-exploitation", "author": "0security playbook corpus", "corroborates": "method detail (detection, fingerprinting, per-engine chains)" },
+    { "src": "MITRE CWE-1336", "author": "MITRE", "corroborates": "mechanism class (template engine injection)" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.8 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "low" },
+  "ttl_days": 365
+}

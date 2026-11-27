@@ -1,0 +1,190 @@
+{
+ "id": "T-0083",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "A route guard compares the request path to a literal and fails open on any mismatch, while the framework still routes appended segments to the same handler",
+ "index_line": "T-0083 · AUTH_DECISION · exact-equality path guard vs framework PathInfo routing: /SetupWizard.aspx/ reaches the setup wizard after setup · dotnet · corroborated",
+ "langs": {
+  "origin": "dotnet",
+  "transferable": [
+   "dotnet",
+   "java",
+   "php",
+   "python",
+   "node",
+   "ruby"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-288",
+   "CWE-863",
+   "CWE-697"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "The guard assumed 'the request path equals /SetupWizard.aspx' and 'the request will be served by SetupWizard.aspx' are the same question. They are not: the guard compares the raw path with exact equality, while the routing layer maps an appended segment (or trailing slash) to the same handler — and the guard's deny branch only runs on equality, so every non-matching spelling fails open.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated GET requests /SetupWizard.aspx/ (a trailing slash or an appended path segment) on an instance that is already configured"
+  },
+  {
+   "n": 2,
+   "primitive": "NORMALIZE",
+   "does": "the framework splits the path into the mapped page (FilePath) and the remainder (PathInfo) and still dispatches the request to SetupWizard.aspx"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "the guard compares the request path to the literal string with exact equality; the appended segment makes the comparison false"
+  },
+  {
+   "n": 4,
+   "primitive": "BYPASS",
+   "bypasses": "guard.pipeline",
+   "does": "the false comparison is read as 'this is not the setup wizard', so the deny branch is skipped and the request continues to the handler"
+  },
+  {
+   "n": 5,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the setup wizard renders on an already-configured instance, letting the attacker create a new administrator account without credentials"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "with administrative access the attacker uploads an extension whose archive member path escapes the extension directory (CVE-2024-1708), dropping an executable into App_Extensions for code execution"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "the request path itself — /SetupWizard.aspx/ or /SetupWizard.aspx/<anything>, unauthenticated"
+  },
+  "guard.pipeline": {
+   "value": "the request-path equality check that gates the setup wizard (a deny-on-match guard, i.e. fail-open by construction)"
+  },
+  "sink.file.write": {
+   "value": "the administrative extension-upload path, where an archive member name (CVE-2024-1708) escapes the extension directory"
+  },
+  "encoding.path": {
+   "value": "the path-segment/PathInfo encoding difference between what the guard reads and what the router matches"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the web interface answers and /SetupWizard.aspx is routed",
+   "check": {
+    "kind": "shell",
+    "spec": "for p in /SetupWizard.aspx /SetupWizard.aspx/ '/SetupWizard.aspx/x'; do printf '%s ' \"$p\"; curl -s -o /dev/null -w '%{http_code}\\n' \"http://HOST$p\"; done"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build predates 23.9.8 (the added ISetupHandler check)",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "SetupWizard\\.aspx|SetupModule|ISetupHandler|string\\.Equals"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the differing status between the exact path and an appended-segment path reflects a guard mismatch, not a redirect to login",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -i http://HOST/SetupWizard.aspx | head -5; curl -s -i http://HOST/SetupWizard.aspx/ | head -5"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "the exact path returns 302/redirect while the appended-segment path returns 200 with the setup form",
+   "the wizard accepts a new administrator on an instance that already has one"
+  ],
+  "failure_like": [
+   "both spellings return the same redirect or 404",
+   "the guard resolves the path and compares canonical handler identity instead of a string"
+  ],
+  "false_positive": [
+   "a 200 that is the login page is not the wizard — require the setup form and a created account",
+   "a trailing-slash redirect (301) is normal HTTP behaviour, not a bypass"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any 'if path == X then check' guard in a framework that routes by prefix or by mapped handler",
+   "the fail-open shape is the real lesson: the guard denies on match, so the attacker only needs a spelling that is not equal",
+   "appended-segment routing exists in ASP.NET PathInfo, Tomcat path parameters, Spring suffix patterns, and nginx alias prefixes"
+  ],
+  "non_transfers": [
+   "routers that reject unmatched paths before the guard",
+   "guards that compare the resolved handler/module identity rather than the raw string"
+  ],
+  "confidence": {
+   "dotnet": 0.9,
+   "java": 0.75,
+   "php": 0.65,
+   "python": 0.6,
+   "node": 0.6,
+   "ruby": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0032",
+  "T-0055"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "ConnectWise ScreenConnect 23.9.7 and earlier — SetupWizard path guard (CVE-2024-1709) with companion write CVE-2024-1708"
+ },
+ "provenance": [
+  {
+   "src": "sources/83ffd02291e5a1a8-screenconnect-huntress.txt",
+   "author": "Huntress Labs",
+   "sha256": "83ffd02291e5a1a8edbb5f13acceb8c84296afd3f3d175eb7afa90d3d9ff5ec6",
+   "corroborates": "CVE-2024-1709: SetupWizard.aspx compares the request path to the literal /SetupWizard.aspx; if the path does not match, the setup wizard is allowed regardless of setup state, and .NET passes trailing path segments (/SetupWizard.aspx/anything) to the same handler; CVE-2024-1708 is the companion path-traversal write into App_Extensions"
+  },
+  {
+   "src": "sources/5a98071b110c0b54-screenconnect-horizon3.txt",
+   "author": "Horizon3.ai Attack Research Team",
+   "sha256": "5a98071b110c0b54f0e7a50819eaf4808b2009dcf96f14f00e5f69f0f040844e",
+   "corroborates": "independent deep dive on CVE-2024-1709: string.Equals exact-equality check on the request URL, so <app_url>/SetupWizard.aspx/ does not match while still resolving to SetupWizard.aspx; reproduces the 302 vs 200 difference between the two paths"
+  },
+  {
+   "src": "MITRE/NVD CVE-2024-1709 + CVE-2024-1708 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "both CVE descriptions, CWE-288 / CWE-22 and affected ranges"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "CVE-2024-1709 KEV 2024-02-22; CVE-2024-1708 KEV 2026-04-28"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

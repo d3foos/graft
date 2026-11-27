@@ -1,0 +1,191 @@
+{
+  "id": "T-0056",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A key-creation endpoint copies the scope the caller asks for instead of intersecting it with the caller's own rights",
+  "index_line": "T-0056 \u00b7 AUTH_DECISION \u00b7 a low-privilege technician mints an API key with administrator scope \u00b7 java/dotnet/php/python \u00b7 corroborated",
+  "langs": {
+    "origin": "java",
+    "transferable": [
+      "java",
+      "dotnet",
+      "php",
+      "python",
+      "node",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-863",
+      "CWE-269",
+      "CWE-732"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A scope field on a credential-creation request is assumed to describe what the caller already has, because the UI only offers their own roles. The server treats it as the definition of what the new credential gets. Asking for more is not a privilege escalation in the code's eyes \u2014 it is a parameter.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a user with a low-privilege role calls the API-key creation endpoint directly, bypassing the UI that limited the choices",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the request names the permissions the new key should carry",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the endpoint validates the requested permissions against the set the product supports, not against the set the caller holds",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "a key with administrative scope is written to the server's configuration store",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the attacker authenticates with their own key and is now an administrator",
+      "primitive": "AUTHZ_CHECK"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the key-creation request with a permissions array \u2014 the escalation is a value in a field, not a missing check"
+    },
+    "token.claims": {
+      "value": "the scope/permission set attached to the issued credential"
+    },
+    "guard.none": {
+      "value": "the missing intersection between requested scope and caller scope"
+    },
+    "sink.file.write": {
+      "value": "the credential store the new key is written into (a config file holding every key and secret)"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a credential-creation endpoint accepts a caller-supplied scope",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "createApiKey|apiKey.*permission|scope[s]?\\s*[:=]|generateToken"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "an account exists with a role below the requested scope",
+      "check": {
+        "kind": "shell",
+        "spec": "log in with the lowest role available and request the highest scope; a 200 returning a key is the finding"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the key store holds other principals' secrets, so a wide-scope key reads them",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "serverconfig|apikey|secret|passwordHash"
+          ],
+          "paths": [
+            "conf",
+            "config",
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a key created by a low-privilege account performs an administrative action",
+      "the created key's scope matches what was requested, not what the account held",
+      "the key store on disk now contains a credential the caller should not have been able to mint"
+    ],
+    "failure_like": [
+      "the endpoint intersects requested scope with the caller's effective permissions",
+      "keys can only be created by administrators, or scopes are fixed per role"
+    ],
+    "false_positive": [
+      "a technician who genuinely holds admin via a group \u2014 check effective permissions first",
+      "a key that is created but rejected downstream: verify an administrative action actually succeeds"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "audit every create-a-credential path for the difference between validating the value and validating against the caller",
+      "API keys are usually stored beside other secrets, so one over-scoped key is a key-store disclosure",
+      "the UI is not a control: enumerate the API behind it with the lowest role you can get",
+      "distinct from T-0035 (provisioning trusts an external claim) and T-0046 (no check at all): here a check exists and checks the wrong thing"
+    ],
+    "non_transfers": [
+      "endpoints that derive scope from the caller's own token rather than from the request body",
+      "credential creation restricted to administrators"
+    ],
+    "confidence": {
+      "java": 0.8,
+      "dotnet": 0.75,
+      "php": 0.75,
+      "python": 0.7,
+      "node": 0.7,
+      "ruby": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0035",
+    "T-0055"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "SimpleHelp <= 5.5.7 (CVE-2024-57726)"
+  },
+  "provenance": [
+    {
+      "src": "sources/6c65487cbd18dea9-simplehelp-horizon3.txt",
+      "author": "Horizon3.ai research, SimpleHelp critical vulnerabilities",
+      "sha256": "6c65487cbd18dea91d1041da3728ce88292d869aa21f469a83f558a2b64ade25",
+      "corroborates": "CVE-2024-57726 (low-privilege technicians creating API keys with excessive permissions) and the serverconfig.xml secret store"
+    },
+    {
+      "src": "https://simple-help.com/security/simplehelp-security-update-2026-05",
+      "author": "SimpleHelp (vendor advisory)",
+      "corroborates": "affected and fixed versions"
+    },
+    {
+      "src": "MITRE/NVD CVE-2024-57726 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-862; low-privilege technicians create API keys with excessive permissions"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-04-24; EPSS 0.664"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.82
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

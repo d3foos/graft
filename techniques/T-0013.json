@@ -1,0 +1,49 @@
+{
+  "id": "T-0013", "schema_version": 4, "record_version": 1,
+  "title": "GraphQL schema disclosure: introspection or error suggestions map the hidden attack surface",
+  "index_line": "T-0013 · INFO_LEAK · __schema dump / typo-suggestion enumeration → authz targets · corroborated",
+  "langs": { "origin": "node", "transferable": ["python", "php", "java", "ruby", "go", "dotnet"] },
+  "class": { "cwe": ["CWE-200"], "capec": [], "effect": "INFO_LEAK", "stage": "impact" },
+  "invariant_violated": "The app hides admin objects behind authz checks but leaves the schema discoverable — introspection enabled, or error suggestions that enumerate it.",
+  "mechanism": [
+    { "n": 1, "does": "attacker sends a crafted GraphQL query ({__typename} to confirm the endpoint)", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "engine parses the query", "primitive": "PARSE" },
+    { "n": 3, "does": "schema lookup via __schema/__type — or, with introspection off, typo-suggestion enumeration ('Did you mean…?')", "primitive": "LOOKUP" },
+    { "n": 4, "does": "full attack surface disclosed: admin mutations, password/secret/token fields, Debug/InternalUser types, ID arguments", "primitive": "READ" },
+    { "n": 5, "does": "leaked schema becomes the authz-gap target list: per-field object-level checks, batch auth bypass, IDOR arguments", "primitive": "AUTHZ_CHECK" }
+  ],
+  "slots": {
+    "source.http.graphql": { "value": "POST /graphql {\"query\":\"…\"} — aliases, batches, fragments included" },
+    "sink.api.introspection": { "value": "the schema-disclosure surface per server", "equivalents": "vocab/equivalents/sink.api.introspection.json" },
+    "encoding.graphql": { "value": "{__schema{types{name fields{name args{name}}}}} · {__type(name:\"User\")…} · {userr} suggestion abuse · alias batches a1:… a1000:" },
+    "guard.introspection": { "value": "introspection disabled? then the question is whether error suggestions still enumerate" },
+    "oracle.error": { "value": "Did-you-mean suggestions and resolver errors as the enumeration oracle" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "GraphQL endpoint present", "check": { "kind": "grep", "spec": { "patterns": ["/graphql|graphiql|playground|altair|explorer"], "paths": ["src", "app", "routes", "public", "conf"] } } },
+    { "kind": "dependency", "expr": "GraphQL server library in the tree", "check": { "kind": "grep", "spec": { "patterns": ["apollo-server|graphql-yoga|graphene|ariadne|strawberry|graphql-php|graphql-java|graphql-ruby|gqlgen"], "paths": ["package.json", "requirements.txt", "composer.json", "pom.xml", "Gemfile", "go.mod"] } } },
+    { "kind": "reachability", "expr": "endpoint reachable without prior auth (or with the lowest auth tier)", "check": { "kind": "grep", "spec": { "patterns": ["graphql"], "paths": ["src", "app", "routes", "public"] } } },
+    { "kind": "auth", "expr": "varies — many deployments expose the endpoint pre-auth" }
+  ],
+  "observables": {
+    "success": ["__schema dump returns types, fields, mutations", "{__typename} confirms the endpoint", "typo query yields 'Did you mean' suggestions with introspection disabled", "admin mutation names and password/secret fields present in the dumped schema"],
+    "failure_like": ["introspection disabled AND suggestions suppressed — only blind guessing remains", "depth/complexity limits resist the DoS flavors (separate concern)"],
+    "false_positive": ["GraphiQL left on but every mutation correctly authz-checked — exposure without a gap is a low-severity config finding, not this record's claim", "public API whose schema is published by design"]
+  },
+  "transfer": {
+    "same_effect": ["vocab/equivalents/sink.api.introspection.json"],
+    "hazards": ["introspection maps the surface; the finding is the authz gap it reveals — test every admin mutation and ID argument", "batching/alias rate-limit bypass and nested DoS are adjacent records, not this one"],
+    "non_transfers": ["REST-only backends", "endpoints requiring introspection-independent auth before any query"],
+    "confidence": { "node": 0.85, "python": 0.8, "php": 0.75, "java": 0.75, "ruby": 0.7, "go": 0.7, "dotnet": 0.7 }
+  },
+  "combines_with": ["T-0001", "T-0003"],
+  "probes": [ { "kind": "grep", "path": "probes/T-0013/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "sources/8361ab0f2f8c891d-src_playbook_graphql.txt", "author": "0security playbook corpus", "sha256": "8361ab0f2f8c891daa46dd470b6ac570379987cc51f29f99c8a20acda692233b", "corroborates": "method detail (discovery, introspection, authz gaps, batching, injection)" },
+    { "src": "MITRE CWE-200", "author": "MITRE", "corroborates": "mechanism class (information exposure)" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.8 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "low" },
+  "ttl_days": 365
+}

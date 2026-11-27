@@ -1,0 +1,45 @@
+{
+  "family": "sink.eval",
+  "effect": "CODE_EXEC",
+  "rev": 2,
+  "note": "Version gates are load-bearing here. Rev 1 listed PHP 'assert' and 'create_function' as live sinks with no gates — both are dead on PHP 8 (verified by execution).",
+  "cells": {
+    "php": {
+      "sinks": [
+        {"name": "eval(...)", "gates": []},
+        {"name": "assert(string)", "gates": ["DEAD on PHP 8: string evaluation removed; inert at default zend.assertions=-1 (verified)"]},
+        {"name": "create_function(...)", "gates": ["REMOVED in PHP 8.0 (verified absent on 8.3.6)"]},
+        {"name": "preg_replace(.../e...)", "gates": ["REMOVED in PHP 7"]}
+      ],
+      "patterns": ["\\beval\\s*\\(", "\\bassert\\s*\\(", "create_function\\s*\\(", "preg_replace\\s*\\([^)]*\\/e"],
+      "verified": {"how": "executed", "test": "tests/equiv/php_eval_gates.php", "what": "eval executes; create_function absent; string assert inert at zend.assertions=-1", "date": "2026-11-20", "box": "php 8.3.6"}
+    },
+    "python": {
+      "sinks": [{"name": "eval(...)"}, {"name": "exec(...)"}, {"name": "compile(...)"}],
+      "patterns": ["\\beval\\s*\\(", "\\bexec\\s*\\(", "\\bcompile\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/py_eval.py", "what": "eval('7*7')==49", "date": "2026-11-20", "box": "python 3.12.3"}
+    },
+    "node": {
+      "sinks": [{"name": "eval(...)"}, {"name": "new Function(...)"}, {"name": "vm.*"}],
+      "patterns": ["\\beval\\s*\\(", "new Function", "require\\(['\"]vm['\"]\\)"],
+      "verified": {"how": "executed", "test": "tests/equiv/node_eval.js", "what": "eval + new Function execute", "date": "2026-11-20", "box": "node v24.21.0"}
+    },
+    "ruby": {
+      "sinks": [{"name": "eval(...)"}, {"name": "instance_eval"}, {"name": "class_eval / module_eval"}],
+      "patterns": ["\\beval\\s*\\(", "instance_eval", "class_eval", "module_eval"],
+      "verified": {"how": "executed", "test": "tests/equiv/ruby_eval.rb", "what": "eval executes", "date": "2026-11-20", "box": "ruby 3.2.3"}
+    },
+    "java": {
+      "sinks": [{"name": "ScriptEngine", "gates": ["Nashorn removed JDK 15; GraalJS opt-in"]}, {"name": "SpEL"}, {"name": "OGNL"}, {"name": "GroovyShell"}],
+      "patterns": ["ScriptEngine", "SpelExpressionParser", "OgnlUtil", "GroovyShell"],
+      "verified": {"how": "documented", "source": "engine release notes (Nashorn JDK-15 removal)", "needs_local_verification": true}
+    },
+    "dotnet": {
+      "sinks": [{"name": "CSharpCodeProvider", "gates": ["Roslyn-legacy path"]}, {"name": "Razor compile"}],
+      "patterns": ["CSharpCodeProvider", "Roslyn", "Razor"],
+      "verified": {"how": "documented", "source": ".NET docs", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["SSTI is this family reached through a template engine — see sink.template.render and gadget.engine-escape", "expression languages (SpEL/OGNL) sandbox differently per version"],
+  "non_transfers": ["go — no eval; text/template method calls only", "rust — no eval in safe code"]
+}

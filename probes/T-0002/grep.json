@@ -1,0 +1,28 @@
+{
+  "kind": "grep",
+  "technique": "T-0002",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "SELECT ",
+    "sqlalchemy|Sequelize|gorm|PDO|mysqli|ActiveRecord",
+    "ORDER BY|order_by|sort_by|sortField|columns\\[\\]|group_by",
+    "JSON\\.parse|req\\.body|Object\\.keys\\("
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

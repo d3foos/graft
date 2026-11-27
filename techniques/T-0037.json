@@ -1,0 +1,194 @@
+{
+  "id": "T-0037",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "An option or preference value that carries a path is a file-write primitive inside the directory you meant to protect",
+  "index_line": "T-0037 \u00b7 FILE_WRITE \u00b7 a transcoder flag takes an output path; the write lands in the directory the process loads code from \u00b7 c/any-child-process \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "python",
+      "node",
+      "ruby",
+      "php",
+      "perl"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-73",
+      "CWE-20"
+    ],
+    "effect": "FILE_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "A setting is assumed to configure *how* a job runs, so it is validated as an enum-ish string. But some of those settings are file paths by nature \u2014 output directory, log target, cache location \u2014 and the child process writes exactly where it is told. No traversal is needed: the write lands in a directory the application itself loads code from.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker obtains a privileged session (here via an SSRF\u2192loopback-only-API\u2192token chain) and reaches the settings surface",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "a preference that takes an output path is set to a directory the process will later load code from (a codec/plugin directory)",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "a transcode is started against an attacker-hosted input, so the child process decodes attacker-chosen content into attacker-chosen frames",
+      "primitive": "CONNECT"
+    },
+    {
+      "n": 4,
+      "does": "the decoder writes its output to the configured path, creating a file with attacker-controlled bytes inside a trusted directory",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the next start of the service loads code from that directory, so the written file is executed rather than read",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the preference/settings and transcode-start requests; the interesting field is the one that names a directory, not the one that names an option"
+    },
+    "sink.file.write": {
+      "value": "the child process's output write \u2014 the write is the feature, and the destination is the payload"
+    },
+    "fs.path.join": {
+      "value": "the configured directory joined with the generated filename; both halves are attacker-influenced"
+    },
+    "encoding.url": {
+      "value": "the SSRF/URL-confusion step that gets you a privileged session in the first place (`127.0.0.1.<attacker>` prefix trust, alt-IP forms)"
+    },
+    "guard.none": {
+      "value": "no check that an output path stays out of the directories the process loads code from"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "a settings surface is writable by a role reachable by the attacker (admin, or whatever the chain yields)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "preferences|options|TranscoderOptions|outputPath|output_dir|dump"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "a preference value that is joined with a filename and used as an output directory by a child process",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "-o \\\"|output.*\\+|outfile|> ?\\\"|snprintf.*%s.*%s"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "a directory the process loads executable code from is writable by that process",
+      "check": {
+        "kind": "shell",
+        "spec": "ls -ld Codecs/ plugins/ lib/ 2>/dev/null; lsof -p $(pgrep -f 'the service') 2>/dev/null | grep -E '\\.so|\\.dll' | head"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a new file appears in a code-loading directory, with content derived from attacker-supplied media rather than from the application",
+      "the write happens during a normal transcode/export, so no upload endpoint is needed",
+      "the file is loaded on the next service start"
+    ],
+    "failure_like": [
+      "output paths are confined to a scratch directory, or the child is run in a sandbox with the code directories read-only",
+      "the preference value is validated against an enum or a restricted character set rather than accepted as a path"
+    ],
+    "false_positive": [
+      "a file created in the output directory by a legitimate export \u2014 check the directory is one the process *loads* from",
+      "a transcode that merely fails: the write may still have happened, so verify on disk rather than by response"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/fs.path.join.json"
+    ],
+    "hazards": [
+      "the interesting question is not 'is this field injectable' but 'what does the child process *write*, and where does it load from'",
+      "the initial access is usually a different bug \u2014 record the write primitive separately so it can be chained with whatever gets you privileges",
+      "bit-exact output (frame dumps, core dumps, cache blobs) makes the written file attacker-controlled byte for byte; do not assume an encoder sanitises it",
+      "admin-only CVSS understates this class: the admin role exists to configure the service, and configuring it into code execution is a boundary failure"
+    ],
+    "non_transfers": [
+      "export paths fixed to a scratch directory the loader never reads",
+      "services whose code directories are read-only at runtime"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "python": 0.6,
+      "node": 0.6,
+      "ruby": 0.6,
+      "php": 0.6,
+      "perl": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0023",
+    "T-0071"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Plex Media Server < 1.43.3.10861 (CVE-2026-96656, plex2shell chain)"
+  },
+  "provenance": [
+    {
+      "src": "sources/dff2b6a45c6d1e73-plex-zmain.txt",
+      "author": "zmain.info plex2shell chain write-up",
+      "sha256": "dff2b6a45c6d1e732652821d53e14739f93905c24071f439e582fec969be65d8",
+      "corroborates": "the full chain: /player/timeline SSRF to loopback, the loopback-only plugin API, the 127.0.0.1-prefix token leak, and the transcoder option writing bit-exact frames into the Codecs directory"
+    },
+    {
+      "src": "https://www.boredhackerblog.info/2026/10/plex-vulnerabilities-being-exploited-in.html",
+      "author": "boredhackerblog (independent)",
+      "corroborates": "in-the-wild exploitation of the Plex CVE cluster"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-96656 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'allows an admin user to write arbitrary files that may be executed on load. The preference TranscoderH264Options is appended\u2026'; CWE-73; CVSS 3.1 7.2 AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-10-20 within the Plex CVE cluster"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.8
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

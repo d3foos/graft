@@ -1,0 +1,45 @@
+{
+  "family": "sink.template.render",
+  "effect": "TEMPLATE_EVAL",
+  "rev": 2,
+  "note": "Template engines rendering user-controlled strings. Engine fingerprinting precedes payload choice; sandbox quality varies by engine and version.",
+  "cells": {
+    "ruby": {
+      "sinks": [{"name": "ERB.new(...).result"}],
+      "patterns": ["ERB\\.new", "\\berb\\b"],
+      "verified": {"how": "executed", "test": "tests/equiv/ruby_template_erb.rb", "what": "ERB evaluates '<%= 7*7 %>' to 49 in stdlib", "date": "2026-11-20", "box": "ruby 3.2.3"}
+    },
+    "python": {
+      "sinks": [{"name": "Jinja2 (Template/Environment.from_string)"}, {"name": "Mako"}],
+      "patterns": ["render_template", "Environment\\(", "Template\\(", "from jinja2", "from mako"],
+      "verified": {"how": "documented", "source": "engine docs (no pip installs offline)", "needs_local_verification": true}
+    },
+    "php": {
+      "sinks": [{"name": "Twig"}, {"name": "Smarty"}],
+      "patterns": ["\\$twig", "Twig_", "new Smarty", "\\$smarty"],
+      "verified": {"how": "documented", "source": "Twig/Smarty docs (no composer offline)", "needs_local_verification": true}
+    },
+    "node": {
+      "sinks": [{"name": "Handlebars/EJS/Nunjucks"}],
+      "patterns": ["handlebars", "\\.compile\\s*\\(", "require\\(['\"]ejs", "nunjucks"],
+      "verified": {"how": "documented", "source": "engine docs", "needs_local_verification": true}
+    },
+    "java": {
+      "sinks": [{"name": "Freemarker"}, {"name": "Velocity"}, {"name": "Thymeleaf"}, {"name": "SpEL"}],
+      "patterns": ["freemarker", "Velocity", "TemplateEngine", "SpelExpression"],
+      "verified": {"how": "documented", "source": "engine docs + published escape chains (Freemarker ?new Execute)", "needs_local_verification": true}
+    },
+    "dotnet": {
+      "sinks": [{"name": "Razor"}],
+      "patterns": ["Razor", "RazorEngine"],
+      "verified": {"how": "documented", "source": "ASP.NET docs", "needs_local_verification": true}
+    },
+    "go": {
+      "sinks": [{"name": "text/template", "gates": ["method calls on passed types only — powerful but not arbitrary expression eval; treat as non-transfer for classic SSTI RCE"]}],
+      "patterns": ["text/template", "template\\.HTML"],
+      "verified": {"how": "documented", "source": "Go text/template docs", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["engine fingerprint first: {{7*7}} vs ${7*7} vs <%= %> vs #set — wrong engine, dead payload", "sandboxed Jinja2 needs the config-attribute chain; raw Twig3 needs filter('system')"],
+  "non_transfers": ["go text/template — no eval", "rust — no mainstream server template eval", "client-side-only templating (renders in browser, not server)"]
+}

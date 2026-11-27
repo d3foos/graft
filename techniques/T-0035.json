@@ -1,0 +1,212 @@
+{
+  "id": "T-0035",
+  "schema_version": 4,
+  "record_version": 3,
+  "title": "Just-in-time provisioning trusts an identity-provider claim, and MFA is enforced at enrolment rather than at provisioning",
+  "index_line": "T-0035 \u00b7 AUTH_DECISION \u00b7 any valid assertion from the IdP self-provisions a privileged user; MFA is self-enrolled after \u00b7 java/c#/python/node \u00b7 corroborated",
+  "langs": {
+    "origin": "java",
+    "transferable": [
+      "java",
+      "dotnet",
+      "python",
+      "node",
+      "ruby",
+      "php"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-287",
+      "CWE-863",
+      "CWE-620"
+    ],
+    "capless": [],
+    "capec": [],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "Single sign-on is assumed to make authentication someone else's problem: a valid assertion means a known, vetted user. But auto-provisioning turns *any* assertion into a new account, and the privilege comes from a group claim the attacker's own IdP can carry. Multi-factor is enforced when a user enrols a factor \u2014 not when one is provisioned, so the first login of a brand-new account is the one login nobody has to satisfy MFA for.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the target accepts OIDC logins, with at least one group mapped to a privileged role and group-authenticated logins enabled",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 2,
+      "does": "an unauthenticated attacker presents an assertion from an identity provider they control, or one whose claims they can shape",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 3,
+      "does": "the server validates the assertion's signature and issuer but treats the *group/role claim* as authoritative without checking that it should apply here",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "the login matches the group rule, and the just-in-time provisioning path creates a brand-new account in the privileged group",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "first login is also the moment the account has no second factor, so the MFA policy is satisfied by enrolling one after the fact",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 6,
+      "does": "the resulting principal can remote into managed endpoints and run scripts \u2014 full control of the fleet the tool was bought to manage",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the federated login callback: the assertion/token, its claims, and the group rule that maps them to a role"
+    },
+    "guard.signature": {
+      "value": "the assertion's signature/issuer validation \u2014 usually correct, and irrelevant here: the flaw is which claims are trusted and what provisioning does with them"
+    },
+    "token.claims": {
+      "value": "the group/role claim that decides the provisioned privilege"
+    },
+    "header.forwarding": {
+      "value": "the redirection/state handling of the OIDC flow \u2014 where an attacker-supplied configuration or callback lands"
+    },
+    "sink.auth.jwt-verify": {
+      "value": "the federated assertion verify/decode call site (OIDC assertion, SAML response, JWT) \u2014 the signature check here can be correct while the claims it returns are trusted without a per-provider policy"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "OIDC is enabled and at least one group is mapped to a privileged role with group-authenticated logins allowed",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "oidc|OpenID|authority|clientId|GroupAuthenticated|allowGroup"
+          ],
+          "paths": [
+            "conf",
+            "config",
+            "web",
+            "app",
+            "settings"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the login path auto-provisions accounts on first sight of an unknown subject",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "JustInTime|just_in_time|provision|createUser.*claim|autoCreate"
+          ],
+          "paths": [
+            "src",
+            "app",
+            "lib"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "MFA can be enrolled by the user after first login (so a fresh account is un-MFA'd by construction)",
+      "check": {
+        "kind": "shell",
+        "spec": "create a test account through the federated path and check whether the account is usable before any second factor is registered"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a brand-new privileged account appears in the admin listing with an unfamiliar name/email and no MFA registered",
+      "the account is usable immediately after provisioning, before any second-factor enrolment",
+      "the login is attributable to a group claim, not to a pre-existing user record"
+    ],
+    "failure_like": [
+      "provisioning is restricted to a known domain/tenant allow-list, or lands accounts in a non-privileged group",
+      "MFA is a precondition of the session rather than an enrolment step"
+    ],
+    "false_positive": [
+      "a legitimate new joiner created by an administrator \u2014 check the IdP's own log for the subject, not just the app's user list",
+      "an existing technician whose MFA was reset; the tell for this bug is a *new* account created via the federated path"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.auth.jwt-verify.json"
+    ],
+    "hazards": [
+      "the assertion validation can be flawless and the system still be open \u2014 triage the *provisioning* decision, not the signature check",
+      "group-claim mapping is where multi-tenant SaaS breaks: the claim is true for the attacker's IdP and means nothing for yours",
+      "the verify call site is usually fine \u2014 the bug is one layer up, in which claims are allowed to map to which role, so 'the signature validates' is not the answer"
+    ],
+    "non_transfers": [
+      "deployments with no OIDC provider configured, or where group-authenticated login is off",
+      "provisioning restricted to an explicit tenant/domain allow-list with role assignment by an administrator",
+      "systems that refuse a session until a second factor is enrolled"
+    ],
+    "confidence": {
+      "java": 0.75,
+      "dotnet": 0.7,
+      "python": 0.7,
+      "node": 0.7,
+      "ruby": 0.65,
+      "php": 0.65
+    }
+  },
+  "combines_with": [
+    "T-0011",
+    "T-0009"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "SimpleHelp <= 5.5.15 and 6.0 pre-release, OIDC login flow (CVE-2026-48558)"
+  },
+  "provenance": [
+    {
+      "src": "sources/a0ff7c76bbfdcfb0-simplehelp-horizon3.txt",
+      "author": "Horizon3.ai attack research (CVE-2026-48558 finder)",
+      "sha256": "a0ff7c76bbfdcfb0f72ebdf673b9c14b6ecf11b02a26bcf8f7d84eb15f7673ea",
+      "corroborates": "the three preconditions (OIDC configured, a TechnicianGroup bound to the provider, group-authenticated logins allowed), technician self-provisioning, and the MFA bypass by first-login enrolment"
+    },
+    {
+      "src": "https://blackpointcyber.com/blog/a-djinn-in-the-machine-taskweavers-node-js-intrusion-chain/",
+      "author": "Blackpoint Cyber (independent intrusion analysis)",
+      "corroborates": "in-the-wild use of the SimpleHelp bypass as an entry point into managed fleets"
+    },
+    {
+      "src": "https://simple-help.com/security/simplehelp-security-update-2026-05",
+      "author": "SimpleHelp (vendor advisory)",
+      "corroborates": "affected and fixed versions, and the OIDC flow as the affected component"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-48558 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-347, CVSS 3.1 9.9 AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-06-29; EPSS 0.803"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.8
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

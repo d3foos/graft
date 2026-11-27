@@ -1,0 +1,47 @@
+{
+  "id": "T-0009", "schema_version": 4, "record_version": 1,
+  "title": "Race on a check-then-act window: limit overrun, double-spend, single-use reuse",
+  "index_line": "T-0009 · AUTH_DECISION · concurrent bursts beat a non-atomic check · last-byte/h2 sync · corroborated",
+  "langs": { "origin": "python", "transferable": ["node", "php", "java", "dotnet", "ruby", "go"] },
+  "class": { "cwe": ["CWE-362"], "capec": [], "effect": "AUTH_DECISION", "stage": "impact" },
+  "invariant_violated": "The app checks a constraint and acts on it in separate, non-atomic steps; concurrent requests act on the pre-check state.",
+  "mechanism": [
+    { "n": 1, "does": "attacker issues N concurrent copies of a constrained action (redeem, transfer, verify token, claim)", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "each request evaluates the validity check against shared state", "primitive": "AUTHZ_CHECK" },
+    { "n": 3, "does": "check compares stale state — no lock spans check and act", "primitive": "COMPARE" },
+    { "n": 4, "does": "multiple requests act on the pre-check state: over-redemption, negative balance, token reuse, duplicate records", "primitive": "WRITE" }
+  ],
+  "slots": {
+    "source.http.request": { "value": "the constrained action endpoint (redeem/apply/transfer/verify/claim)" },
+    "sync.window": { "value": "the check→act gap — the target fact to measure" },
+    "client.burst": { "value": "last-byte sync (HTTP/1.1 hold-final-byte) or single-packet HTTP/2 — defeats network jitter" },
+    "guard.locking": { "value": "what resists: row locks, unique constraints, transactions, Redis SETNX/DECR" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "stateful backend (session/db/redis)", "check": { "kind": "grep", "spec": { "patterns": ["session|redis|transaction|UPDATE|INSERT"], "paths": ["src", "app", "routes", "models"] } } },
+    { "kind": "dependency", "expr": "constraint-protected operation present", "check": { "kind": "grep", "spec": { "patterns": ["balance|coupon|voucher|invite|redeem|apply|checkout|verify|stock|claim"], "paths": ["src", "app", "routes", "controllers", "services"] } } },
+    { "kind": "reachability", "expr": "operation reachable via a single request the attacker can repeat", "check": { "kind": "grep", "spec": { "patterns": ["POST|PUT|PATCH"], "paths": ["src", "app", "routes"] } } },
+    { "kind": "auth", "expr": "usually authenticated user — the interesting ones are one-per-account constraints" }
+  ],
+  "observables": {
+    "success": [">1 success among N concurrent attempts (e.g. 15/20 redemptions succeed)", "negative balance / duplicate records / counter beyond limit", "request timestamps within <10ms of each other"],
+    "failure_like": ["DB row locks / unique constraints hold the line", "Redis atomic ops (SETNX/DECR) serialize the check-act", "framework serializes the handler (per-session lock)"],
+    "false_positive": ["rate limiter blocked the burst — separate finding, not a race", "duplicate successes from client retries with idempotency keys (correct behavior)"]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": ["framework-level locking differs (transactions, advisory locks, per-session locks) — inspect guard.locking before spending requests", "network proximity dominates: same-DC bursts win, remote jitter loses"],
+    "non_transfers": ["stateless handlers", "queues that serialize the operation by construction"],
+    "confidence": { "python": 0.8, "node": 0.8, "php": 0.7, "java": 0.75, "dotnet": 0.75, "ruby": 0.75, "go": 0.8 }
+  },
+  "combines_with": [],
+  "probes": [ { "kind": "grep", "path": "probes/T-0009/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "skill:race-condition", "author": "0security playbook corpus", "corroborates": "method detail (endpoints, last-byte sync, patterns, proof construction)" },
+    { "src": "MITRE CWE-362", "author": "MITRE", "corroborates": "mechanism class" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.8 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "medium" },
+  "ttl_days": 365
+}

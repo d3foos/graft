@@ -1,0 +1,185 @@
+{
+  "id": "T-0033",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A source-text denylist cannot see what the bytecode will do, and a code object is writable data",
+  "index_line": "T-0033 \u00b7 CODE_EXEC \u00b7 regex filter over source; names rebuilt at runtime and the method table rewritten \u00b7 python \u00b7 corroborated",
+  "langs": {
+    "origin": "python",
+    "transferable": [
+      "python"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-94",
+      "CWE-693"
+    ],
+    "effect": "CODE_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A sandbox is assumed to constrain what the evaluated code can reach because it filters the *source text*. But the text is compiled: identifiers can be assembled at runtime from fragments the filter never sees, and the resulting code object's attribute table is writable after compilation \u2014 so the filter inspects a language the interpreter does not execute.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an authenticated request submits Python source to an endpoint that evaluates custom rule code for testing",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the evaluator denies dangerous attributes and builtins by matching literal strings against the source",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 3,
+      "does": "the payload rebuilds each denied name at runtime from concatenated fragments, and reaches the object base class through an allowed accessor instead of a denied one",
+      "primitive": "BYPASS",
+      "bypasses": "guard.sandbox"
+    },
+    {
+      "n": 4,
+      "does": "a function's code object is taken, and its names table is replaced with the attacker's own tuples",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the rewritten function is executed, and the interpreter resolves attributes from the attacker-supplied table \u2014 reachable where the filter saw nothing",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 6,
+      "does": "the chain arrives at the module system and runs a command as the service account",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "the JSON `custom_code` field of the test/eval endpoint \u2014 needs an account, but every tenant user has one"
+    },
+    "sink.eval": {
+      "value": "compile()+exec of user source, and the follow-on `code.replace(co_names=...)` \u2014 the runtime object, not the text"
+    },
+    "guard.sandbox": {
+      "value": "regex/denylist source filtering; defeated by runtime string assembly plus an allowed accessor"
+    },
+    "gadget.engine-escape": {
+      "value": "`str.mro()[1]`, `gi_code`, `code.replace` \u2014 the CPython introspection path from an allowed callable to the code object"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "an endpoint evaluates user-supplied source with a filter rather than an isolation boundary",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "re\\.search|re\\.match|denylist|blacklist|forbidden",
+            "exec\\s*\\(|compile\\s*\\(|eval\\s*\\("
+          ],
+          "paths": [
+            "src",
+            "app",
+            "lib",
+            "backend"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the filter runs over the source string, not the compiled object",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "inspect the guard: does it receive (code_text) or (code_object)? if it only sees text, string assembly defeats it"
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the evaluating process holds privileges worth having (in the stock container: root) and the module system is reachable",
+      "check": {
+        "kind": "shell",
+        "spec": "id -u; ps -o user= -p 1"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "command output returned from a request that only 'tested' a rule; no application feature used",
+      "the payload never contains a denied literal as a contiguous string \u2014 the filter is provably looking at the wrong layer",
+      "a code object's attribute table differs from what the source implies"
+    ],
+    "failure_like": [
+      "the evaluator runs the code in a separate process/isolate with no filesystem or module access",
+      "the guard operates on the compiled code object's names/consts rather than on the text"
+    ],
+    "false_positive": [
+      "a payload that appears to work because the *test* harness ran it with operator privileges \u2014 check the runtime user",
+      "an error naming a blocked attribute: the filter working, not the bypass"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.eval.json"
+    ],
+    "hazards": [
+      "source-level filtering is a category error on any compiled-then-executed language; the audit question is 'what object does the guard inspect?'",
+      "runtime string assembly, alternative accessors, and code-object rewriting are three independent bypass families \u2014 a fix for one leaves the others",
+      "the endpoint needs only a tenant-level account, which in multi-tenant tooling is as good as unauth",
+      "if the evaluator already has a real isolation boundary, do not record this \u2014 check for one before assuming a denylist"
+    ],
+    "non_transfers": [
+      "evaluation in a separate process or WASM isolate with a message-only interface",
+      "guards that inspect the compiled names/consts, or that only permit an AST subset with no attribute access"
+    ],
+    "confidence": {
+      "python": 0.9
+    }
+  },
+  "combines_with": [
+    "T-0021",
+    "T-0026"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "LiteLLM proxy /guardrails/test_custom_code (CVE-2026-40217)"
+  },
+  "provenance": [
+    {
+      "src": "sources/4989c315e3eb7835-litellm-x41.txt",
+      "author": "X41 D-Sec advisory X41-2026-001 (independent audit, Markus Vervier)",
+      "sha256": "4989c315e3eb7835689fb3eb950c2cf39917addae727e0afb8e605913f48ddc4",
+      "corroborates": "the six-step bypass: regex avoidance by concatenation, str.mro()[1], gi_code, code.replace(co_names=\u2026), and the resulting arbitrary execution"
+    },
+    {
+      "src": "https://access.redhat.com/security/cve/CVE-2026-40217",
+      "author": "Red Hat Product Security",
+      "corroborates": "independent CVE analysis and affected-version mapping for shipped packages"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-40217 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'execute arbitrary code via bytecode rewriting at the /guardrails/test_custom_code URI'; CVSS 3.1 8.8 AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-11-18; EPSS 0.619"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

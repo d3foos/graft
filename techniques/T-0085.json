@@ -1,0 +1,184 @@
+{
+ "id": "T-0085",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "A service bound to localhost is treated as unreachable and therefore unauthenticated, and the web tier proxies attacker parameters straight into it",
+ "index_line": "T-0085 · FILE_WRITE · unauthenticated proxy to a no-auth localhost PostgreSQL sidecar: backupFile traversal → create/truncate any file · go · corroborated",
+ "langs": {
+  "origin": "go",
+  "transferable": [
+   "go",
+   "java",
+   "python",
+   "node",
+   "php",
+   "ruby",
+   "dotnet"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-306",
+   "CWE-22",
+   "CWE-73"
+  ],
+  "capec": [],
+  "effect": "FILE_WRITE",
+  "stage": "impact"
+ },
+ "invariant_violated": "The sidecar assumed that binding to loopback made it unreachable by attackers, so it never implemented authentication; and the front end assumed its callers were the application. Both assumptions are false once the web tier exposes an endpoint that forwards caller-supplied parameters to the sidecar — 'only local processes can reach me' is not an access-control decision.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated POST to the web tier's /v1/postgres/recovery/backup carries a database name and a caller-controlled backupFile"
+  },
+  {
+   "n": 2,
+   "primitive": "LOOKUP",
+   "does": "the web application proxies the request to the PostgreSQL sidecar listening on loopback, which performs no authentication at all"
+  },
+  {
+   "n": 3,
+   "primitive": "CONCAT",
+   "does": "the sidecar joins backupFile onto its own service directory to form the dump destination"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "pg_dump is executed with that destination, so a ../../ backupFile creates or truncates any file the service account can write"
+  },
+  {
+   "n": 5,
+   "primitive": "LOOKUP",
+   "does": "the attacker chooses a destination the operating system consumes automatically — a cron entry, an authorized_keys file, a unit/service definition"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "the scheduler or service loader executes the planted content, turning an empty-file primitive into code execution"
+  }
+ ],
+ "slots": {
+  "source.http.body": {
+   "value": "the JSON body of /v1/postgres/recovery/backup: database and backupFile, with no credentials required"
+  },
+  "sink.file.write": {
+   "value": "pg_dump writing to the path built from backupFile — file creation and truncation anywhere the service account can write"
+  },
+  "fs.path.join": {
+   "value": "the sidecar's join of its install directory with the caller's backupFile; ../../ resets out of the tree"
+  },
+  "guard.none": {
+   "value": "no authentication on the sidecar endpoint, no containment check on the destination path, and the proxy forwards without re-authorising"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the Splunk web port answers and the sidecar proxy route exists (Splunk 10+ with the PostgreSQL sidecar enabled, default on AWS images)",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -X POST http://HOST:8000/v1/postgres/recovery/backup -H 'Content-Type: application/json' -d '{\"database\":\"search_metadata\",\"backupFile\":\"probe\"}'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build is in the affected range (10.x below 10.0.7, 10.2.x below 10.2.4)",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s http://HOST:8000/help 2>/dev/null | grep -oE 'Splunk [0-9]+\\.[0-9]+\\.[0-9]+' | head -1; splunk version 2>/dev/null | head -2"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "a PostgreSQL sidecar process is present and listening on loopback",
+   "check": {
+    "kind": "shell",
+    "spec": "ss -tupln 2>/dev/null | grep -i splunk-postgres"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a file appears at an attacker-chosen path outside the Splunk service directory",
+   "an existing file is truncated to zero length and its previous content is gone"
+  ],
+  "failure_like": [
+   "the proxy route returns 404/401",
+   "backupFile is reduced to a basename or the resolved path is checked against the service directory"
+  ],
+  "false_positive": [
+   "a 200 with a Pending/BackupPending state is the request being accepted, not proof of write — verify the file on disk",
+   "files created inside the service directory are normal backup behaviour"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every appliance with an internal service mesh: sidecars, admin sockets, unix-domain APIs, and 'we only listen on 127.0.0.1' daemons",
+   "the front end is the authentication boundary only if it actually authorises every forwarded parameter",
+   "file creation alone is enough when a loader consumes the path (cron, systemd, authorized_keys, .pth, launchd)"
+  ],
+  "non_transfers": [
+   "sidecars that require a per-process secret or unix-socket permissions the web tier alone holds",
+   "proxies that validate parameters against an allowlist rather than forwarding them"
+  ],
+  "confidence": {
+   "go": 0.85,
+   "java": 0.7,
+   "python": 0.7,
+   "node": 0.6,
+   "php": 0.6,
+   "ruby": 0.6,
+   "dotnet": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0027",
+  "T-0084"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Splunk Enterprise 10.x / 10.2.x, PostgreSQL sidecar service endpoint (CVE-2026-20253)"
+ },
+ "provenance": [
+  {
+   "src": "sources/6669faef22452697-splunk-watchtowr.txt",
+   "author": "watchTowr Labs",
+   "sha256": "6669faef224526975e0a6c17891a64263ff62ab0bd907733813ccf9bb4671c27",
+   "corroborates": "CVE-2026-20253: the Splunk web tier proxies unauthenticated requests to the local PostgreSQL sidecar (/v1/postgres/recovery/backup); the endpoint has no authentication controls, and backupFile is joined onto the service directory, so ../../../ escapes it and pg_dump creates or truncates an arbitrary file"
+  },
+  {
+   "src": "sources/0d32ab6c622a2fc2-splunk-advisory-svd-2026-0603.txt",
+   "author": "Splunk (SVD-2026-0603)",
+   "sha256": "0d32ab6c622a2fc212b3c23405446ae310e824d6f971b819775a473fd6a51ac8",
+   "corroborates": "vendor advisory: unauthenticated arbitrary file creation and truncation via a PostgreSQL sidecar service endpoint; the vulnerability exists because the endpoint lacks authentication controls, allowing any network-reachable user to invoke file operations without credentials"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-20253 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-20253 description + CWE/CVSS"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

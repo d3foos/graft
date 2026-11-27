@@ -1,0 +1,45 @@
+{
+  "family": "sink.auth.jwt-verify",
+  "effect": "AUTH_DECISION",
+  "rev": 2,
+  "note": "JWT verification call sites. Every cell here is DOCUMENTED (no JWT library is installed in this box — pyjwt import fails): needs_local_verification before relying on any cell as executed.",
+  "cells": {
+    "node": {
+      "sinks": [{"name": "jsonwebtoken jwt.verify / express-jwt", "gates": ["algorithms option must be set; historical wrappers defaulted loosely"]}, {"name": "jose / @panva/jose"}],
+      "patterns": ["jsonwebtoken", "jwt\\.verify", "express-jwt", "require\\(['\"]jose"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    },
+    "python": {
+      "sinks": [{"name": "pyjwt jwt.decode"}, {"name": "python-jose"}],
+      "patterns": ["import jwt", "jwt\\.decode", "python-jose", "from jose"],
+      "verified": {"how": "documented", "source": "library docs (pyjwt not installed here)", "needs_local_verification": true}
+    },
+    "java": {
+      "sinks": [{"name": "jjwt"}, {"name": "nimbus-jose-jwt"}, {"name": "java-jwt (auth0)"}],
+      "patterns": ["jjwt", "nimbus", "JWTParser", "com\\.auth0\\.jwt"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    },
+    "dotnet": {
+      "sinks": [{"name": "Microsoft.IdentityModel.Tokens / JwtBearer"}],
+      "patterns": ["JwtBearer", "IdentityModel", "TokenValidationParameters"],
+      "verified": {"how": "documented", "source": "MS docs", "needs_local_verification": true}
+    },
+    "php": {
+      "sinks": [{"name": "firebase/php-jwt"}],
+      "patterns": ["Firebase\\\\JWT", "JWT::decode"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    },
+    "ruby": {
+      "sinks": [{"name": "jwt gem"}],
+      "patterns": ["require ['\"]jwt", "JWT\\.decode"],
+      "verified": {"how": "documented", "source": "gem docs", "needs_local_verification": true}
+    },
+    "go": {
+      "sinks": [{"name": "golang-jwt/jwt"}],
+      "patterns": ["golang-jwt", "jwt\\.Parse"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["alg acceptance is a library-config fact, not a language fact — verify the options actually passed", "the public key must be fetchable for RS256->HS256 confusion; jku/x5u make it attacker-fetchable"],
+  "non_transfers": ["opaque server-side sessions (no client-verified algorithm at all)", "mTLS/token-binding schemes"]
+}

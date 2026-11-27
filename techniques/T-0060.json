@@ -1,0 +1,187 @@
+{
+  "id": "T-0060",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "The attack surface includes pages the current product no longer links to, still holding their old trust model",
+  "index_line": "T-0060 \u00b7 SQL_EXEC \u00b7 a legacy ASP page still concatenates SQL after the product moved on \u00b7 php/asp/any-legacy-tree \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "php",
+      "python",
+      "ruby",
+      "java"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-89",
+      "CWE-1104"
+    ],
+    "effect": "SQL_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A codebase is treated as the code the product uses. Every rewrite leaves files behind that nothing links to \u2014 and nothing authenticates, nothing reviews and nothing patches them either. A page from two product generations ago keeps the trust model it was written under, and stays reachable at its old URL because the server still serves the directory.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker enumerates legacy paths (old .asp/.php entry points) that the current UI no longer links to",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the server resolves the path to an orphaned script still present in the web root",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the legacy handler reads its parameters with the parsing conventions of its generation, which validate nothing",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "the script builds a database query by concatenating that parameter, as was normal when it was written",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 5,
+      "does": "the query reaches the database parser and the attacker syntax executes",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 6,
+      "does": "the result comes back, or is inferred from verbose error and timing differences",
+      "primitive": "READ"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "a parameter on an orphaned page \u2014 the page is not in any link graph, so it is found by enumeration or by source disclosure"
+    },
+    "sink.sql.concat": {
+      "value": "the legacy query string built by concatenation"
+    },
+    "encoding.string": {
+      "value": "quote-breaking payloads for the DB dialect in use"
+    },
+    "oracle.error": {
+      "value": "the legacy page usually has verbose errors enabled, which is the extraction channel"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the server still serves the directory containing pre-rewrite scripts",
+      "check": {
+        "kind": "shell",
+        "spec": "for p in /admin/ /legacy/ /old/ /includes/; do curl -sk -o /dev/null -w \"$p %{http_code}\\n\" https://HOST$p; done"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "an orphaned script concatenates a request parameter into SQL",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "SELECT .*\\\" *\\+ *Request|SELECT .*' *\\+ *Request|sql *= *\\\"[^\\\"]*\\\" *&|execute\\(.*& *Request"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the orphaned path is not referenced by the current application",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "grep the current UI and routes for the filename; zero references plus a 200 response is the proof"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a script that no current page links to answers 200 and processes parameters",
+      "the response is verbose: a SQL error naming the dialect, or a result set that should be behind a login",
+      "removing the parameter changes the error, proving the parameter reaches the query"
+    ],
+    "failure_like": [
+      "the legacy directory is blocked at the server, or the old files were removed in the rewrite"
+    ],
+    "false_positive": [
+      "a 200 returning a generic error page \u2014 check whether the parameter influenced it",
+      "a legacy path served by the SPA fallback (200 with the app's HTML) \u2014 that is not the old script running"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.sql.concat.json"
+    ],
+    "hazards": [
+      "the audit unit is the deployed file list, not the repository: diff what the server serves against what the app references",
+      "rewrites leave includes, admin tools, installers and test harnesses behind; each is a time capsule of the old security posture",
+      "verbose errors are the norm in that vintage, which makes extraction cheap",
+      "related to T-0061 (a CGI multiplexer exposing every script): both are 'forgotten code is still reachable', but here the discovery is by path and there by a dispatcher parameter"
+    ],
+    "non_transfers": [
+      "deployments that ship only referenced files, or block unlinked directories",
+      "frameworks that route every request through a single front controller"
+    ],
+    "confidence": {
+      "c": 0.8,
+      "php": 0.8,
+      "python": 0.75,
+      "ruby": 0.7,
+      "java": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0001",
+    "T-0061"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Advantive VeraCore through 2025.1.0 (CVE-2025-25181)"
+  },
+  "provenance": [
+    {
+      "src": "sources/2cd66cdec7b84900-veracore-intezer.txt",
+      "author": "Intezer research on XE Group zero-days (CVE-2024-57968 / CVE-2025-25181)",
+      "sha256": "2cd66cdec7b84900ece6c9ddb02e149b7ed9d056ee20606e37044a699aac91ba",
+      "corroborates": "the XE Group's use of the VeraCore upload validation and SQL injection flaws, including the 2020-era legacy page"
+    },
+    {
+      "src": "https://www.solissecurity.com/",
+      "author": "Solis Security (independent analysis of the XE Group campaign)",
+      "corroborates": "independent threat-research record of the same exploitation"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-25181 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "SQL injection in timeoutWarning.asp; CWE-89"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-03-10; EPSS 0.548"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.78
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

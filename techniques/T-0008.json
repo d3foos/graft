@@ -1,0 +1,49 @@
+{
+  "id": "T-0008", "schema_version": 4, "record_version": 1,
+  "title": "Prototype pollution: recursive merge writes user keys onto the shared prototype",
+  "index_line": "T-0008 · CODE_EXEC · __proto__/constructor.prototype through a merge · gadget decides the effect · corroborated",
+  "langs": { "origin": "node", "transferable": [] },
+  "class": { "cwe": ["CWE-1321"], "capec": [], "effect": "CODE_EXEC", "stage": "impact" },
+  "invariant_violated": "The app treats JSON keys as properties of one object; a recursive merge writes them onto the shared prototype, changing behavior for every object.",
+  "mechanism": [
+    { "n": 1, "does": "attacker JSON body with __proto__ / constructor.prototype keys hits a merge endpoint", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "recursive merge/assign walks attacker keys", "primitive": "PARSE" },
+    { "n": 3, "does": "key lands on Object.prototype (merge does not special-case the prototype chain)", "primitive": "WRITE" },
+    { "n": 4, "does": "later code reads the inherited property — the gadget: template option, spawn option, auth flag, jwt verify options", "primitive": "CALLBACK" },
+    { "n": 5, "does": "RCE via child_process/EJS/Pug/Handlebars options, or AUTH_DECISION via isAdmin/role flip, or alg:none via jsonwebtoken options", "primitive": "INVOKE" }
+  ],
+  "slots": {
+    "source.http.body": { "value": "JSON body on a POST/PUT/PATCH merge-capable endpoint" },
+    "sink.merge.recursive": { "value": "Object.assign / _.merge / _.defaultsDeep / $.extend(deep) / custom deepMerge on user JSON" },
+    "encoding.json-key": { "value": "{\"__proto__\": {…}} · {\"constructor\": {\"prototype\": {…}}}" },
+    "gadget.prototype": { "value": "EJS outputFunctionName · NODE_OPTIONS --require · child_process shell/argv0 · isAdmin/role/verified flip · jsonwebtoken algorithms:['none']" },
+    "guard.none": { "value": "merge must not sanitize __proto__/constructor keys — most don't" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "node runtime", "check": { "kind": "shell", "spec": "node --version" } },
+    { "kind": "dependency", "expr": "merge/assign sink present", "check": { "kind": "grep", "spec": { "patterns": ["Object\\.assign|\\.merge\\(|defaultsDeep|\\.extend\\(|deepMerge|deepExtend|lodash"], "paths": ["src", "app", "lib", "routes"] } } },
+    { "kind": "reachability", "expr": "user JSON reaches the merge", "check": { "kind": "grep", "spec": { "patterns": ["req\\.body|JSON\\.parse\\s*\\("], "paths": ["src", "app", "routes", "controllers"] } } },
+    { "kind": "auth", "expr": "varies — merge endpoints usually authenticated user" }
+  ],
+  "observables": {
+    "success": ["a fresh empty object reflects the polluted property ({}.polluted === value)", "admin/role flag flips on an account that should not have it", "marker output via child_process/EJS/Pug gadget", "jsonwebtoken accepts an alg:none token after options pollution"],
+    "failure_like": ["merge uses Object.create(null) targets or sanitizes __proto__/constructor keys", "own property shadows the prototype on every read path"],
+    "false_positive": ["client-side-only pollution — browser page, no server merge", "gadget property exists but no code path ever reads it"]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": ["the gadget depends on package.json contents — enumerate the template/auth libs before choosing", "browser-side variant exists but is a different impact class (XSS/DOM)"],
+    "non_transfers": ["go/rust/java — no shared mutable prototype; the nearest analogue (config-merge confusion) is a different record"],
+    "confidence": { "node": 0.9 }
+  },
+  "combines_with": ["T-0004", "T-0005"],
+  "probes": [ { "kind": "grep", "path": "probes/T-0008/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "skill:prototype-pollution", "author": "0security playbook corpus", "corroborates": "method detail (merge sinks, detection payloads, server-side gadgets)" },
+    { "src": "MITRE CWE-1321", "author": "MITRE", "corroborates": "mechanism class" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.85 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "low" },
+  "ttl_days": 365
+}

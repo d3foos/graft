@@ -1,0 +1,221 @@
+{
+  "id": "T-0001",
+  "schema_version": 4,
+  "record_version": 4,
+  "title": "User string concatenated into SQL, extracted via boolean/time/OOB oracle",
+  "index_line": "T-0001 \u00b7 SQL_EXEC \u00b7 string concat into SQL \u00b7 boolean/time/OOB oracle \u00b7 all SQL stacks \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "python",
+      "node",
+      "java",
+      "dotnet",
+      "ruby",
+      "go"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-89"
+    ],
+    "capec": [
+      "CAPEC-66"
+    ],
+    "effect": "SQL_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "The app treats attacker text inside a SQL string as data; the SQL parser treats it as syntax.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "attacker string reaches a query built by concatenation",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "app splices the string into SQL text instead of binding a parameter",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 3,
+      "does": "DB parser interprets quote/comment as syntax",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "inline filter defeated via comment/case/encoding variants, if present",
+      "primitive": "BYPASS",
+      "bypasses": "guard.waf"
+    },
+    {
+      "n": 5,
+      "does": "data proven via boolean differential, timing delta, or OOB callback",
+      "primitive": "READ"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "any request parameter incl. headers/cookies/JSON values"
+    },
+    "sink.sql.concat": {
+      "value": "string-built SQL reaching the driver",
+      "equivalents": "vocab/equivalents/sink.sql.concat.json"
+    },
+    "encoding.string": {
+      "value": "' OR 'a'='a \u00b7 -- - \u00b7 # \u00b7 /**/ \u00b7 %2527 double-decode"
+    },
+    "guard.waf": {
+      "value": "inline filter/WAF if present \u2014 else guard.none"
+    },
+    "oracle.channel": {
+      "value": "reflected | boolean | time (SLEEP/pg_sleep/WAITFOR) | OOB (LOAD_FILE/xp_dirtree/COPY TO PROGRAM)"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "SQL backend in use",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "PDO|mysqli|sqlalchemy|Sequelize|gorm|ActiveRecord|SELECT "
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "string-built SQL present",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "\\.query\\s*\\(",
+            "cursor\\.execute\\s*\\(",
+            "\\$sql\\s*\\.=",
+            "fmt\\.Sprintf\\s*\\([^\")]*SELECT"
+          ],
+          "paths": [
+            "src",
+            "app",
+            "routes",
+            "controllers",
+            "api"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "request input reaches the query builder",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "\\$_(GET|POST|REQUEST|COOKIE)",
+            "req\\.(query|body|params)",
+            "request\\.(GET|POST)"
+          ],
+          "paths": [
+            "src",
+            "app",
+            "routes",
+            "controllers"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "varies \u2014 often none for public parameters"
+    }
+  ],
+  "observables": {
+    "success": [
+      "true/false response differential (1=1 vs 1=2)",
+      ">=3s delay on dialect-specific sleep payload vs baseline",
+      "DNS OOB hit from LOAD_FILE/xp_dirtree/COPY TO PROGRAM",
+      "error message leaks DB dialect"
+    ],
+    "failure_like": [
+      "identical bytes for true and false payloads",
+      "WAF block page (403 + vendor signature)",
+      "no timing delta above jitter"
+    ],
+    "false_positive": [
+      "app-level validation rejects the quote before the DB \u2014 error from the app, not the DB parser",
+      "syntax error from the app's own SQL builder, not the DB"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.sql.concat.json"
+    ],
+    "hazards": [
+      "identifier positions (ORDER BY, column names) cannot be bound in any dialect \u2014 that is T-0002",
+      "dialect delay/exfil functions differ (SLEEP/pg_sleep/WAITFOR)",
+      "ORM raw-query escape hatches differ per language"
+    ],
+    "non_transfers": [
+      "fully parameterized code paths",
+      "stored procedures with bound parameters only",
+      "NoSQL stores (different family)"
+    ],
+    "confidence": {
+      "php": 0.9,
+      "python": 0.85,
+      "node": 0.8,
+      "java": 0.8,
+      "dotnet": 0.8,
+      "ruby": 0.8,
+      "go": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0002"
+  ],
+  "probes": [
+    {
+      "kind": "grep",
+      "path": "probes/T-0001/grep.json"
+    }
+  ],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "OWASP / MITRE CWE-89 corpus"
+  },
+  "provenance": [
+    {
+      "src": "skill:sqli-advanced",
+      "author": "0security playbook corpus",
+      "corroborates": "method detail (phases 1-8)"
+    },
+    {
+      "src": "MITRE CWE-89",
+      "author": "MITRE",
+      "corroborates": "mechanism class"
+    },
+    {
+      "src": "MITRE CAPEC-66",
+      "author": "MITRE",
+      "corroborates": "attack pattern shape"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "low"
+  },
+  "ttl_days": 365
+}

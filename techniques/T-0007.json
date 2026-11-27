@@ -1,0 +1,49 @@
+{
+  "id": "T-0007", "schema_version": 4, "record_version": 1,
+  "title": "Deserialization gadget chain: blob names types, decoder instantiates them, their code runs",
+  "index_line": "T-0007 · EXEC · magic bytes first, URLDNS/DNS canary blind, gadget matched to classpath · corroborated",
+  "langs": { "origin": "java", "transferable": ["php", "python", "dotnet", "ruby", "node"] },
+  "class": { "cwe": ["CWE-502"], "capec": [], "effect": "EXEC", "stage": "impact" },
+  "invariant_violated": "The app treats a serialized blob as inert data; the decoder instantiates attacker-named types and their code runs.",
+  "mechanism": [
+    { "n": 1, "does": "attacker controls a serialized blob (cookie, body, session, uploaded phar)", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "decoder parses the stream and reads attacker-named types", "primitive": "DESERIALIZE" },
+    { "n": 3, "does": "magic method / readObject / __destruct / __reduce__ fires on attacker fields", "primitive": "CALLBACK" },
+    { "n": 4, "does": "gadget chain crosses to a dangerous effect (ysoserial / phpggc / pickle __reduce__)", "primitive": "INVOKE" },
+    { "n": 5, "does": "command executes; blind variant proves decode via DNS canary first", "primitive": "EXEC" }
+  ],
+  "slots": {
+    "source.http.cookie": { "value": "cookie/header/base64 body blob; phar variant rides an uploaded file" },
+    "sink.deser.native": { "value": "the native decoder (readObject/unserialize/pickle.loads/Marshal.load/BinaryFormatter)", "equivalents": "vocab/equivalents/sink.deser.native.json" },
+    "encoding.object-stream": { "value": "rO0AB (java) · O:8:\"stdClass\":… (php) · \\x04\\x08 (ruby rack) · pickle b64 (python sessions)" },
+    "gadget.magic-method": { "value": "ysoserial CommonsCollections*/URLDNS · phpggc Monolog/Laravel/Symfony · pickle __reduce__ · Json.NET ObjectDataProvider" },
+    "guard.format": { "value": "magic-byte/format validation in front of the decoder — usually absent" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "gadget candidates in the dependency graph", "check": { "kind": "grep", "spec": { "patterns": ["InvokerTransformer|CommonsCollections|commons-beanutils|__destruct|__wakeup|call_user_func|__reduce__"], "paths": ["vendor", "node_modules", "lib", "src"] } } },
+    { "kind": "dependency", "expr": "native deserializer called on external bytes", "check": { "kind": "grep", "spec": { "patterns": ["unserialize\\s*\\(|pickle\\.loads|ObjectInputStream|Marshal\\.load|BinaryFormatter|readObject\\s*\\("], "paths": ["src", "app", "lib", "routes"] } } },
+    { "kind": "reachability", "expr": "request-reachable bytes reach the decoder", "check": { "kind": "grep", "spec": { "patterns": ["Cookie|cookie|session|base64_decode|request\\.body|__VIEWSTATE"], "paths": ["src", "app", "routes", "controllers"] } } },
+    { "kind": "auth", "expr": "varies — remember-me/session blobs often pre-auth reachable" }
+  ],
+  "observables": {
+    "success": ["URLDNS/DNS canary hit — proves the decoder ran with zero gadget", "marker output from the gadget chain (id/whoami)", "unserialize error offset reveals the parser (baseline probe)"],
+    "failure_like": ["format validation rejects the blob before decode", "gadget class absent from classpath/autoloader — chain dies silently"],
+    "false_positive": ["agent-side pickle/marshal executed locally instead of the target's decoder", "JSON parsed without type instantiation — nothing dispatches"]
+  },
+  "transfer": {
+    "same_effect": ["vocab/equivalents/sink.deser.native.json"],
+    "hazards": ["gadget availability is a per-target fact — enumerate vendor/ classpath first, then match the chain", "PHP magic methods differ from Python __reduce__ and Java readObject; payload builders differ (phpggc vs ysoserial vs hand-rolled pickle)"],
+    "non_transfers": ["go encoding/gob — no method dispatch from stream data", "rust serde — no attacker-named instantiation in safe code", "plain JSON without type tags"],
+    "confidence": { "java": 0.85, "php": 0.85, "python": 0.8, "dotnet": 0.8, "ruby": 0.7, "node": 0.6 }
+  },
+  "combines_with": ["T-0006"],
+  "probes": [ { "kind": "grep", "path": "probes/T-0007/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "skill:deserialization-chains", "author": "0security playbook corpus", "corroborates": "method detail (format detection, per-stack chains, phar variant)" },
+    { "src": "MITRE CWE-502", "author": "MITRE", "corroborates": "mechanism class" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.85 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "medium" },
+  "ttl_days": 365
+}

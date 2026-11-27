@@ -1,0 +1,184 @@
+{
+ "id": "T-0086",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The token check proves who signed it and who issued it, but never what it was for, so an anonymous token can be exchanged for admin scope",
+ "index_line": "T-0086 · AUTH_DECISION · valid-but-mis-scoped token: signature+issuer verified, scope ignored → anonymous JWT escalated to admin · java · corroborated",
+ "langs": {
+  "origin": "java",
+  "transferable": [
+   "java",
+   "dotnet",
+   "node",
+   "python",
+   "go",
+   "php",
+   "ruby"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-863",
+   "CWE-269",
+   "CWE-345"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "Token validation assumed that a correctly signed token from the right issuer is a token for the right purpose. The scope claim was never compared with the operation being authorised, so a token minted for the internal anonymous identity was accepted as authority to mint an admin-scoped token.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated POST to the token endpoint returns an internal anonymous-user JWT, even with anonymous access disabled"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the attacker presents that JWT to the token-exchange/creation endpoint"
+  },
+  {
+   "n": 3,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the service verifies the signature and the issuer — both are genuinely valid, so the token is accepted"
+  },
+  {
+   "n": 4,
+   "primitive": "COMPARE",
+   "does": "the token's intended scope is never compared against the scope of the requested operation"
+  },
+  {
+   "n": 5,
+   "primitive": "WRITE",
+   "does": "a new token is minted carrying admin authority while keeping the anonymous identity, so later requests appear as token:anonymous"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "the admin token creates a persistent admin account and deploys a plugin, giving code execution and a foothold that survives restarts"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "two unauthenticated API calls: obtain the anonymous JWT, then exchange it for a scoped token"
+  },
+  "guard.signature": {
+   "value": "the signature and issuer validation that passes correctly and is the only check performed"
+  },
+  "token.claims": {
+   "value": "the scope/audience claim that is present in the token and never enforced against the operation"
+  },
+  "sink.auth.jwt-verify": {
+   "value": "the token-verification/creation service whose acceptance decision is the whole vulnerability"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the Artifactory access API answers",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/access/api/v1/system/ping; curl -s -o /dev/null -w '%{http_code}\\n' -X POST http://HOST/access/api/v1/aws/token/"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build is in the affected range",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s http://HOST/artifactory/api/system/version | head -c 200"
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "a token with a valid signature but the wrong scope is accepted for a privileged call",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -X POST http://HOST/access/api/v1/tokens -H 'Authorization: Bearer <low-priv-token>' -H 'Content-Type: application/json' -d '{\"scope\":\"applied-permissions/admin\"}' | head -c 300"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a token created with an anonymous identity carries admin authority and is accepted by admin endpoints",
+   "later audit entries show actor token:anonymous performing administrative actions"
+  ],
+  "failure_like": [
+   "the exchange endpoint rejects a token whose scope does not include token creation",
+   "the minted token keeps the anonymous scope and admin endpoints answer 403"
+  ],
+  "false_positive": [
+   "anonymous access being enabled by configuration is not this bug — the flaw is that a token is issued even when it is disabled, and that its scope is not enforced",
+   "a token that merely decodes to admin-looking JSON is not accepted until an admin endpoint acts on it"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every JWT/OAuth deployment that checks signature and issuer and calls it done",
+   "token-exchange endpoints are scope amplifiers: they take a low-value token and mint a high-value one",
+   "the identity in the token can stay unprivileged while the scope becomes administrative, so identity-based detections miss it"
+  ],
+  "non_transfers": [
+   "issuers that bind audience/scope into the signature and verify it at every consumer",
+   "systems where a token exchange requires the subject to hold the requested scope"
+  ],
+  "confidence": {
+   "java": 0.85,
+   "dotnet": 0.7,
+   "node": 0.7,
+   "python": 0.6,
+   "go": 0.6,
+   "php": 0.6,
+   "ruby": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0011",
+  "T-0042"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "JFrog Artifactory self-hosted, access token service (CVE-2026-42016 with CVE-2026-42018 as the token source)"
+ },
+ "provenance": [
+  {
+   "src": "sources/dcb95346b29c0d63-jfrog-wiz.txt",
+   "author": "Wiz Research",
+   "sha256": "dcb95346b29c0d6398893b8550f7c1fadd4cc5a33a434eb9292a630288e01186",
+   "corroborates": "in-the-wild chain: CVE-2026-42018 returns an internal anonymous-user JWT to an unauthenticated POST /access/api/v1/aws/token/ even when anonymous access is disabled; CVE-2026-42016 lets that token be exchanged at POST /access/api/v1/tokens for an admin-scoped token because the service validates signature and issuer but not intended scope; admin token then creates persistent admin accounts and deploys Groovy plugins"
+  },
+  {
+   "src": "sources/cf276491570c972e-jfrog-security-advisories.txt",
+   "author": "JFrog (security advisories)",
+   "sha256": "cf276491570c972e0e34123082aaa3b7da760d78fdac4235d3861a71ad3501b1",
+   "corroborates": "vendor advisories: CVE-2026-42018 — Artifactory could return an internal anonymous-user token to an unauthenticated caller when anonymous access is disabled; CVE-2026-42016 — insufficient token validation allowing privilege escalation"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-42016 + CVE-2026-42018 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "both CVE descriptions and affected ranges"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "in KEV; exploited in the wild Aug-Sep 2026"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

@@ -1,0 +1,186 @@
+{
+  "id": "T-0065",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "One request, two URLs: the router dispatches on the raw path while the guard reads a URL rebuilt from the unvalidated Host header",
+  "index_line": "T-0065 \u00b7 AUTH_DECISION \u00b7 guard reads request.url.path rebuilt from Host, router uses the raw path \u2014 a path-carrying Host header separates them \u00b7 python \u00b7 corroborated",
+  "langs": {
+    "origin": "python",
+    "transferable": [
+      "python",
+      "node",
+      "java",
+      "dotnet",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-436"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A request has exactly one URL. The framework silently violated that: routing consumed the path as submitted, while request.url was rebuilt from an unvalidated Host header \u2014 so every guard that decided on request.url.path was guarding a different request than the one being routed.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker sends GET /protected with a Host value that itself carries path and query syntax the RFC forbids (Host: target.example/safe?x=)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the framework rebuilds the URL as scheme://host_header+path with no Host validation, so the reconstructed path is /safe",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "path-based security middleware evaluates request.url.path (/safe) and allows the request",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 4,
+      "does": "the guard passed on one representation while the attack rides the other \u2014 nothing re-checks the raw path",
+      "primitive": "BYPASS",
+      "bypasses": "guard.resolve-check"
+    },
+    {
+      "n": 5,
+      "does": "the router dispatches on the raw HTTP path to the protected handler",
+      "primitive": "LOOKUP"
+    }
+  ],
+  "slots": {
+    "source.http.header": {
+      "value": "the Host request header, accepted with path/query syntax RFC 9112 s3.2 forbids"
+    },
+    "sink.url.reconstruct": {
+      "value": "the scheme://host_header+path reconstruction that every request.url consumer now trusts"
+    },
+    "guard.resolve-check": {
+      "value": "middleware authorizing by request.url.path \u2014 defeated by feeding it the reconstructed representation"
+    },
+    "encoding.url": {
+      "value": "payload shape: 'example.com/safe-path?x=' prepends an attacker path inside the Host value"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "security middleware or endpoints decide on the reconstructed URL rather than the routed path",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "request\\.url\\.path|request\\.url|build_absolute_uri|url_for\\("
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "a path-carrying Host is accepted rather than rejected as malformed",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -H 'Host: target.example/safe?x=' http://HOST:PORT/protected/path"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the framework predates Host validation (starlette < 1.0.1 in the origin case; affected since 0.8.3)",
+      "check": {
+        "kind": "shell",
+        "spec": "python3 -c 'import starlette, sys; print(starlette.__version__)' 2>/dev/null || pip show starlette 2>/dev/null | head -2"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the protected route executes although the middleware's evaluated path was innocuous",
+      "status/body differ between a clean Host and a path-carrying Host on the same raw path",
+      "chained in the wild to fully unauthenticated RCE via a downstream tool's request.url-based security check"
+    ],
+    "failure_like": [
+      "the framework rejects a malformed Host with 400 (RFC 9112 validation present)",
+      "guards consume the same path representation the router uses"
+    ],
+    "false_positive": [
+      "an open redirect built from a Host-derived Location is a different record \u2014 the violated invariant here is guard-vs-router disagreement",
+      "a front-end proxy that pins Host masks the bug rather than demonstrating it"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "every middleware family that authorizes by URL/path: auth gates, admin-panel guards, allowlists \u2014 audit each consumer of request.url",
+      "the same reconstruction poisons redirects, reset links and server-side fetches; the sink is URL building, not any one guard",
+      "FastAPI users inherit starlette's request.url verbatim; wrappers that bolt on 'security middleware' are the prime consumers",
+      "this is T-0045's disagreement pattern moved inside a single framework \u2014 no proxy pair needed"
+    ],
+    "non_transfers": [
+      "frameworks that validate Host or route by the same representation they guard by",
+      "deployments behind a proxy that overwrites Host with a fixed value"
+    ],
+    "confidence": {
+      "python": 0.9,
+      "node": 0.6,
+      "java": 0.6,
+      "dotnet": 0.6,
+      "ruby": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0003",
+    "T-0045"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Starlette < 1.0.1 (CVE-2026-48710 'BadHost', GHSA-86qp-5c8j-p5mr; chained in the wild with LiteLLM CVE-2026-42271 to unauthenticated RCE)"
+  },
+  "provenance": [
+    {
+      "src": "sources/e4845c90cd0a779b-x41-2026-002-starlette.txt",
+      "author": "X41 D-Sec GmbH",
+      "sha256": "e4845c90cd0a779b85eda6e8ed07bb3efe98517d5f1d423f34f51950dc5cb37d",
+      "corroborates": "the reconstruction formula f\"{scheme}://{host_header}{path}\"; no RFC 9112 s3.2 validation; router depends on the raw path while request.url.path is rebuilt; PoC middleware auth bypass; affected >= 0.8.3 < 1.0.1; CWE-436; CVSS 7"
+    },
+    {
+      "src": "sources/8ef05765b919cf59-starlette-pysec-2026-161.txt",
+      "author": "Starlette project / pypa advisory-db (PYSEC-2026-161, GHSA-86qp-5c8j-p5mr)",
+      "sha256": "8ef05765b919cf59986b9d657fdfb2717275a52daceeb7cb3d0f36bdad2dc983",
+      "corroborates": "vendor confirmation: BadHost poisons request.url.path and bypasses path-based security checks; fixed in 1.0.1"
+    },
+    {
+      "src": "sources/c8881ff7927ffaf6-wiz-ai-infrastructure-honeypot.txt",
+      "author": "Wiz Research",
+      "sha256": "c8881ff7927ffaf60449aa0b3a75f9554c98f931fdb0c765fcbec1350d82ef3c",
+      "corroborates": "independent observation: active exploitation chaining the Starlette host-header bypass (CVE-2026-48710) with LiteLLM CVE-2026-42271 to fully unauthenticated RCE; linked to Qilin ransomware"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-48710 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2026-48710 description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-09-02"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

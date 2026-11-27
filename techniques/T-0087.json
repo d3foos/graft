@@ -1,0 +1,182 @@
+{
+ "id": "T-0087",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The session was authorized on the server, so the endpoint being controlled was never asked whether the file may be written and run",
+ "index_line": "T-0087 · EXEC · client-side file transfer/execution accepted on session authority alone, no Host confirmation · dotnet · corroborated",
+ "langs": {
+  "origin": "dotnet",
+  "transferable": [
+   "dotnet",
+   "cpp",
+   "go",
+   "rust",
+   "java",
+   "node"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-862",
+   "CWE-863",
+   "CWE-345"
+  ],
+  "capec": [],
+  "effect": "EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "Authorization was decided where the session was created — a role holding TransferFiles rights, checked by the server — and the endpoint that actually receives and runs the file was left out of the decision. The host's own consent was assumed to be implied by the session's existence, so a permitted session could write and execute on a machine whose user never agreed.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "file-transfer and file-execution actions arrive at the host client over an already-open remote session"
+  },
+  {
+   "n": 2,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the action is authorized only against the server-side role (TransferFiles) that the technician holds"
+  },
+  {
+   "n": 3,
+   "primitive": "PARSE",
+   "does": "the client accepts the transfer instruction and resolves the destination on the host, including elevated-execution actions"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "the transferred file is written into the host's writable location"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "the client launches the transferred file as part of the same action"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "attacker-supplied code runs on the host with the client's (often elevated) privileges, without the host user ever approving it"
+  }
+ ],
+ "slots": {
+  "source.protocol": {
+   "value": "the remote-session control channel: file-transfer/file-execute actions multiplexed with the technician's session"
+  },
+  "guard.none": {
+   "value": "no host-side consent or authorization check for receiving and executing a transferred file — the server's role check is the only gate"
+  },
+  "sink.file.write": {
+   "value": "the transferred file landing on the host's filesystem"
+  },
+  "sink.exec.shell": {
+   "value": "the client executing the transferred file, including elevated execution actions"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the endpoint client predates 26.6.5",
+   "check": {
+    "kind": "shell",
+    "spec": "ls -d '/opt/screenconnect' '/Applications/ConnectWise Control.app' 'C:\\\\Program Files (x86)\\\\ScreenConnect' 2>/dev/null; find / -maxdepth 4 -iname 'ScreenConnect.ClientService*' 2>/dev/null | head -3"
+   }
+  },
+  {
+   "kind": "auth",
+   "expr": "a role holds the TransferFiles permission for the session group in use",
+   "check": {
+    "kind": "shell",
+    "spec": "printf 'enumerate roles via admin UI: Admin > Security > Roles > <role> > session group permissions > TransferFiles\\n'"
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "file-transfer actions complete on the host without prompting the host user",
+   "check": {
+    "kind": "shell",
+    "spec": "printf 'observe host for RunFiles/RanFiles audit entries attributed to Process: Guest during a test transfer\\n'"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a file appears on the host and is executed without any host-side prompt",
+   "session audit records a file-transfer/execute action with no corresponding user approval on the endpoint"
+  ],
+  "failure_like": [
+   "the client refuses the transfer without explicit host consent (26.6.5+)",
+   "the role lacks TransferFiles, so the server rejects the action before it reaches the client"
+  ],
+  "false_positive": [
+   "a technician transferring files with the host user watching and approving is the intended workflow, not this bug — require execution with no host confirmation",
+   "a file-transfer entry alone is not proof; the execution of the transferred file is"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every remote-support/RMM agent: the endpoint is a deputy that can write and run on behalf of whoever holds a session",
+   "the pattern is 'authorization decided at the control plane, action executed on the data plane with no local check'",
+   "worm-shaped propagation: a compromised endpoint can push the same payload to endpoints it later connects to"
+  ],
+  "non_transfers": [
+   "clients that require a per-action host prompt or a pre-approved policy on the endpoint",
+   "roles without transfer/execute rights"
+  ],
+  "confidence": {
+   "dotnet": 0.85,
+   "cpp": 0.7,
+   "go": 0.6,
+   "rust": 0.6,
+   "java": 0.6,
+   "node": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0030",
+  "T-0083"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "ConnectWise ScreenConnect client before 26.6.5, file-transfer/file-execution in active sessions (CVE-2026-84869)"
+ },
+ "provenance": [
+  {
+   "src": "sources/60a74f7346ea9ad8-screenconnect-bulletin-2026-09-08.txt",
+   "author": "ConnectWise (bulletin 2026-09-08)",
+   "sha256": "60a74f7346ea9ad86a15cd39cef8c894f9c0e24e069c0d56b0e1c72b3d0d49f8",
+   "corroborates": "CVE-2026-84869: a condition in the ScreenConnect client may allow files to be transferred and executed through an active remote session without authorization or Host confirmation; classified Missing Authorization; the 26.6.5 patch strengthens client and session handling for file-transfer and file-execution actions, and the interim mitigation is to remove the TransferFiles permission from roles"
+  },
+  {
+   "src": "sources/61072922505db01a-screenconnect-rogue-huntress.txt",
+   "author": "Huntress Labs",
+   "sha256": "61072922505db01aa85026a6994dfe553767edf0837a63b8cf60bfe94093dc9b",
+   "corroborates": "independent analysis of the campaign exploiting it: earlier versions had a client-side flaw in file-transfer handling where transfer actions could proceed during an active session without proper authorization or confirmation from the Host, enabling files to be transferred to and executed on the Host, including elevated execution actions; RunFiles/RanFiles audit entries from Process: Guest"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-84869 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-84869 description (file transfer/execution without authorization or Host confirmation), CVSS 9.9"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

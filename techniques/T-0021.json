@@ -1,0 +1,205 @@
+{
+  "id": "T-0021",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The sandbox removes the global names but leaves a live context binding: `this` still walks back to the host runtime",
+  "index_line": "T-0021 \u00b7 CODE_EXEC \u00b7 expression sandbox blocks `require`, leaves `this`\u2192`process`\u2192module system \u00b7 node/any-embedded-JS \u00b7 corroborated",
+  "langs": {
+    "origin": "node",
+    "transferable": [
+      "node",
+      "python",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-913",
+      "CWE-693"
+    ],
+    "effect": "CODE_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "An expression evaluator is assumed safe because it removes or shadows the dangerous global names (`require`, `process`, `global`). But the evaluated function is still *called with a receiver*, and the receiver's prototype chain reaches the same runtime. Denying names does not deny reachability.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker (or a chained read primitive) gets the right to author an expression in a field the server evaluates",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the evaluator hides the host globals from the expression's scope and runs it inside a function-like wrapper",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the wrapper is invoked with a receiver, so `this` resolves to a context object rather than to undefined",
+      "primitive": "CALLBACK"
+    },
+    {
+      "n": 4,
+      "does": "walking the receiver's prototype/constructor chain reaches the host `process` object \u2014 a name that was never in scope",
+      "primitive": "BYPASS",
+      "bypasses": "guard.sandbox"
+    },
+    {
+      "n": 5,
+      "does": "`process.mainModule` (or the module cache) exposes the full module loader, so `require('child_process')` becomes available after all",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 6,
+      "does": "the child process runs with the privileges of the application process, which is the whole prize",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "the workflow/node/step field that carries a `{{ }}` expression \u2014 the attacker does not send code, they send a field value that will be compiled"
+    },
+    "sink.eval": {
+      "value": "the expression compile+run call (new Function, vm.runInContext, lodash template, a rules/expressions DSL)"
+    },
+    "gadget.engine-escape": {
+      "value": "`this` \u2192 `process` \u2192 `mainModule.require` (or `constructor.constructor`), the path from a sandboxed expression to the module system"
+    },
+    "guard.sandbox": {
+      "value": "the denylist/shadow of global names \u2014 it is defeated because it enumerates names rather than severing the receiver"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "server-side expression evaluation exists and is reachable by the attacker's privilege level",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "new Function\\s*\\(|vm\\.runIn|vm\\.Script|eval\\s*\\(|\\{\\{.*\\}\\}|expression.*evaluat"
+          ],
+          "paths": [
+            "src",
+            "app",
+            "lib",
+            "packages"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the attacker can author a value that is evaluated (workflow editor, rules engine, template field, formula)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "workflow|expression|formula|rules?|template.*field",
+            "admin|owner"
+          ],
+          "paths": [
+            "src",
+            "app",
+            "lib"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the sandbox hides global *names* \u2014 confirm the evaluated function still receives a receiver (a `this` inside it is not undefined)",
+      "check": {
+        "kind": "shell",
+        "spec": "send an expression that returns typeof this and Object.getPrototypeOf(this); a non-undefined receiver with a reachable constructor chain is the precondition"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the process runs with more privilege than the workflow author should have (in the stock container, root)",
+      "check": {
+        "kind": "shell",
+        "spec": "ps -o user= -p $PPID; id -u && whoami"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the expression returns the output of an OS command (`uid=0(root)` style) rather than a value the app computed",
+      "the escape uses no application feature \u2014 only runtime internals that should not have been reachable from the expression",
+      "a child process appears under the application's process, spawning a shell or a downloader"
+    ],
+    "failure_like": [
+      "`this` is undefined in the evaluated scope, or the receiver is a frozen null-prototype object",
+      "the evaluator ships a real isolate/process boundary (separate worker with a message-only channel) rather than a name denylist"
+    ],
+    "false_positive": [
+      "an expression that merely *mentions* `process` in a string and is never evaluated (stored, logged, or rendered as text)",
+      "client-side evaluation only \u2014 browser `eval` on the attacker's own page is not this",
+      "a crash or timeout from an infinite loop \u2014 availability, not code execution"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.eval.json"
+    ],
+    "hazards": [
+      "the escape shape is runtime-specific and version-specific \u2014 `mainModule` is deprecated-but-present in some builds; enumerate a few receiver paths before concluding safe",
+      "the precondition is usually the hard part: this needs authoring rights, which is why it is so often chained with an unauthenticated read that forges a session",
+      "running the process as non-root does not fix the bug, it lowers the blast radius \u2014 say so, do not confuse the two"
+    ],
+    "non_transfers": [
+      "engines that evaluate in a separate process or WASM isolate with no shared objects",
+      "engines with a real AST allow-list (no member access on arbitrary receivers) rather than a name denylist",
+      "pure data-binding templates that never evaluate operators/functions"
+    ],
+    "confidence": {
+      "node": 0.9,
+      "python": 0.55,
+      "ruby": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0004",
+    "T-0008"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "n8n 0.211.0 \u2013 1.119.x (CVE-2025-68613), fixed 1.120.4 / 1.121.1 / 1.122.0"
+  },
+  "provenance": [
+    {
+      "src": "sources/0107fefd783f95da-damonsec-n8n-cve-2025-68613.txt",
+      "author": "damonsec.com lab reproduction (CVE-2025-68613)",
+      "sha256": "0107fefd783f95da91f6d127667255b258c7ac29c9a93ffc39c67d6f27f8cd74",
+      "corroborates": "the working escape expression, the `this`\u2192`process.mainModule.require` path, the required privilege, CWE-913 reading, detection signals"
+    },
+    {
+      "src": "https://github.com/n8n-io/n8n/security/advisories/GHSA-v98v-ff95-f3cp",
+      "author": "n8n (vendor advisory GHSA-v98v-ff95-f3cp)",
+      "corroborates": "'expressions supplied by authenticated users \u2026 may be evaluated in an execution context that is not sufficiently isolated from the underlying runtime'"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-68613 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-913, CVSS 3.1 AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H, reference set incl. the vendor advisory and an independent malware-research write-up"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-03-11, due 2026-03-25"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.86
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

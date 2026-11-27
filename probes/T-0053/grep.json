@@ -1,0 +1,18 @@
+{
+  "kind": "static",
+  "technique": "T-0053",
+  "note": "exec-surface inventory probe: dynsym imports x shell templates; static only, never a taint proof",
+  "checks": [
+    "identify all ELFs under the extracted rootfs (magic 7f 45 4c 46)",
+    "read .dynsym: flag importers of system/popen/execve/execl/execlp/execv/execvp/posix_spawn/wordexp",
+    "extract printable strings only from flagged binaries",
+    "keep strings containing %s that also match shell tokens (rm|sed|uci|nvram|iptables|tftp|wget|curl|echo|kill|insmod|ifconfig|route|brctl|sh -c)",
+    "mark binaries that also import bind/recvfrom/listen (network-facing) and record which other daemons reference them"
+  ],
+  "oracle_ladder": ["static"],
+  "false_positive_guard": [
+    "log-format strings (e.g. connection-reuse logs with URL: %s) match the regex but never reach exec - read the string, do not count it",
+    "the busybox applet symlink farm duplicates one binary under dozens of names - resolve symlinks first",
+    "compiled Lua splits io.popen into two constants: literal-name greps return 0 on LuaQ bytecode (a false negative, not a clean result)"
+  ]
+}

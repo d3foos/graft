@@ -1,0 +1,32 @@
+{
+  "kind": "grep",
+  "technique": "T-0001",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "PDO|mysqli|sqlalchemy|Sequelize|gorm|ActiveRecord|SELECT ",
+    "\\.query\\s*\\(",
+    "cursor\\.execute\\s*\\(",
+    "\\$sql\\s*\\.=",
+    "fmt\\.Sprintf\\s*\\([^\")]*SELECT",
+    "\\$_(GET|POST|REQUEST|COOKIE)",
+    "req\\.(query|body|params)",
+    "request\\.(GET|POST)"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

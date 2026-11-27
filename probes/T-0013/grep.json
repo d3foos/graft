@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0013",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "/graphql|graphiql|playground|altair|explorer",
+    "apollo-server|graphql-yoga|graphene|ariadne|strawberry|graphql-php|graphql-java|graphql-ruby|gqlgen",
+    "graphql"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "conf",
+    "public"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

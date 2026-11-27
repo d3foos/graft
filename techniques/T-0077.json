@@ -1,0 +1,189 @@
+{
+ "id": "T-0077",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The digest verifier is handed a hash of the password as the expected secret, so the stored hash is the credential",
+ "index_line": "T-0077 · AUTH_DECISION · WS-Security PasswordDigest against a server that hashes its own password: the hash is the credential · dotnet · corroborated",
+ "langs": {
+  "origin": "dotnet",
+  "transferable": [
+   "dotnet",
+   "java",
+   "php",
+   "python",
+   "node",
+   "ruby"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-836",
+   "CWE-288",
+   "CWE-287"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "The staging service assumed that passing a SHA1 of the configured password to the WS-Security digest verifier was the same as passing the password; but the client's digest is computed over whatever secret the server names, so the check proves knowledge of the hash, not of the plaintext.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a SOAP request to /CMSPages/Staging/SyncServer.asmx carries a WS-Security UsernameToken whose Password Type attribute is chosen by the client"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "WSE3 reads the attacker-supplied Type attribute and routes verification to VerifyHashedPassword instead of VerifyPlainTextPassword"
+  },
+  {
+   "n": 3,
+   "primitive": "LOOKUP",
+   "does": "Kentico's overridden AuthenticateToken returns GetSHA1Hash(configuredPassword) as the expected secret for the named user"
+  },
+  {
+   "n": 4,
+   "primitive": "COMPARE",
+   "does": "VerifyHashedPassword computes SHA1(nonce + created + expectedSecret) and compares it with the digest in the request"
+  },
+  {
+   "n": 5,
+   "primitive": "BYPASS",
+   "bypasses": "guard.signature",
+   "does": "because the expected secret is itself a hash, the attacker computes the digest over the hash — possession of the stored hash is sufficient and the password is never needed"
+  },
+  {
+   "n": 6,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the token is marked authenticated and the staging task data is accepted for deserialization, which is the code-execution surface"
+  }
+ ],
+ "slots": {
+  "source.http.body": {
+   "value": "the SOAP envelope: both the UsernameToken Password Type and the staging task payload are attacker-controlled XML"
+  },
+  "guard.signature": {
+   "value": "the WS-Security digest check, defeated because the verifier's own 'expected secret' is a hash of the password"
+  },
+  "sink.deser.native": {
+   "value": "the staging endpoint deserializes stagingTaskData with SoapFormatter once the token is accepted"
+  },
+  "encoding.string": {
+   "value": "PasswordDigest = Base64(SHA1(nonce + created + secret)) — the encoding that makes the hash usable as a credential"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the staging SOAP endpoint is reachable",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -X POST http://HOST/CMSPages/Staging/SyncServer.asmx -H 'Content-Type: text/xml' --data '<x/>'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build overrides UsernameTokenManager and hashes the stored password before handing it to the verifier",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "UsernameTokenManager|AuthenticateToken|GetSHA1Hash|WebServiceAuthorization"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "auth",
+   "expr": "the Staging service is enabled with user-name/password authentication (X.509 mode is not affected)",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -X POST http://HOST/CMSPages/Staging/SyncServer.asmx -H 'Content-Type: text/xml' --data '<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><ProcessSynchronizationTaskData xmlns=\"http://localhost/SyncWebService/SyncServer\"><stagingTaskData>x</stagingTaskData></ProcessSynchronizationTaskData></soap:Body></soap:Envelope>' | grep -i 'missing username token\\|invalid security token'"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a PasswordDigest built from the SHA1 of the configured password is accepted where the plaintext was never known",
+   "the SOAP action proceeds past authentication into staging-task processing"
+  ],
+  "failure_like": [
+   "the endpoint demands X.509 client certificates",
+   "the server hashes with a salt/iteration the client cannot reproduce, so the digest does not validate"
+  ],
+  "false_positive": [
+   "a fault mentioning 'invalid security token' means the digest path ran — it is not a bypass",
+   "a username mismatch returns an empty expected secret and is rejected; only a matching user name exercises the flaw"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any custom password-verification hook that pre-hashes the stored secret before the library compares it",
+   "WS-Security/WSE-style stacks where the client picks the password type in the message",
+   "hash-as-credential generalises to pass-the-hash against any verifier that compares hashes"
+  ],
+  "non_transfers": [
+   "verifiers that compute a salted KDF from the plaintext inside the comparison",
+   "protocols where the password type is fixed by configuration, not chosen in the message"
+  ],
+  "confidence": {
+   "dotnet": 0.9,
+   "java": 0.6,
+   "php": 0.5,
+   "python": 0.5,
+   "node": 0.5,
+   "ruby": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0078"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Kentico Xperience <= 13.0.178, Staging/Sync Server SyncServer.asmx with user-name/password authentication (CVE-2025-2746)"
+ },
+ "provenance": [
+  {
+   "src": "sources/8b113de2583ebb52-kentico-watchtowr.txt",
+   "author": "watchTowr Labs",
+   "sha256": "8b113de2583ebb528361ea84b545d352d2a529dca210416250dfa681d4b8c0bc",
+   "corroborates": "CVE-2025-2746: Kentico overrides UsernameTokenManager.AuthenticateToken and returns StagingTaskRunner.GetSHA1Hash(configuredPassword) as the expected secret; the client may set Password Type=PasswordDigest, so the digest can be computed over the hash without knowing the plaintext — full source snippets and a working request"
+  },
+  {
+   "src": "sources/9ed9669a4fb2f763-kentico2746-vulncheck.txt",
+   "author": "VulnCheck",
+   "sha256": "9ed9669a4fb2f7637075aab4492c8ea8de351f5fcc77b19c1e82e11a4d28f8cf",
+   "corroborates": "independent advisory: Kentico Xperience Staging Sync Server digest-password authentication bypass (CWE-288 alternate path/channel), affected through 13.0.178"
+  },
+  {
+   "src": "MITRE/NVD CVE-2025-2746 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2025-2746 description and CWE"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2025-10-20"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

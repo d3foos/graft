@@ -1,0 +1,190 @@
+{
+  "id": "T-0039",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A character-encoding 'best fit' manufactures a dash, and a dash turns a query string into a command line",
+  "index_line": "T-0039 \u00b7 EXEC \u00b7 an encoding-conversion table maps an innocuous character to `-`; the interpreter reads it as an option \u00b7 c/php \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "php"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-78",
+      "CWE-176",
+      "CWE-88"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A component is assumed to be safe because its *own* parser rejects dangerous syntax, and because the dangerous characters are unrepresentable in the transport. Both assumptions die at the boundary: an encoding conversion with a 'best fit' table silently substitutes a near-enough character from the target character set, and the substituted character can be a leading dash. A payload assembled by a conversion table is syntax the sender never had to be able to type.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker sends a request whose parameters carry characters that will be re-encoded on their way to the interpreter",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the platform's encoding conversion maps each character to its closest equivalent in the target codepage, so a soft hyphen becomes a plain hyphen",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the re-encoded parameter is placed on the interpreter's command line, exactly as the platform is documented to do for CGI execution",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 4,
+      "does": "the interpreter's own argument parser sees a leading dash and treats the value as an option instead of data",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 5,
+      "does": "an allowed option enables code execution or file write, so the 'data' argument becomes a directive",
+      "primitive": "BYPASS",
+      "bypasses": "guard.resolve-check"
+    },
+    {
+      "n": 6,
+      "does": "the interpreter executes the attacker-supplied code in the web server's context",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the query string: an encoded character the sender cannot type, followed by an option name and its value"
+    },
+    "sink.exec.noshell": {
+      "value": "the CGI interpreter invocation whose argv is assembled from the request \u2014 argument injection into the interpreter itself"
+    },
+    "encoding.url": {
+      "value": "percent-encoded multibyte and 0xAD-class characters chosen for what the conversion maps them to"
+    },
+    "guard.none": {
+      "value": "no separation between options and data, and no check that the re-encoded value cannot begin an option"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the deployment runs the interpreter as a CGI on a platform whose encoding conversion has a best-fit table (Windows with non-UTF-8 codepages)",
+      "check": {
+        "kind": "shell",
+        "spec": "php-cgi -v 2>/dev/null; grep -iE 'cgi.rfc2616|force_redirect' php.ini 2>/dev/null; locale"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the CGI path forwards the query string as command-line arguments (the documented behaviour a mitigation has to disable)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "cgi\\.force_redirect|cgi\\.fix_pathinfo|php-cgi|PHP-CGI"
+          ],
+          "paths": [
+            "php.ini",
+            "conf.d",
+            "apache2",
+            "httpd"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the server is reachable and passes the request to CGI rather than to a module",
+      "check": {
+        "kind": "shell",
+        "spec": "request a path that the CGI mapping handles and confirm the interpreter's argv receives the decoded parameters (a probe that echoes its own argv)"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a request that contains no ASCII dash still causes an option to be parsed \u2014 the dash came from the conversion",
+      "the interpreter executes an option such as a source-file or auto-prepend primitive and returns output",
+      "the same request is inert when the platform runs the interpreter as a server module or on a UTF-8-only codepage"
+    ],
+    "failure_like": [
+      "the conversion table is strict and drops unmappable characters instead of substituting",
+      "the deployment puts `--` between options and the request-derived values"
+    ],
+    "false_positive": [
+      "a payload using a literal `-` that the application sanitised \u2014 then the bug is the sanitiser, not the encoding",
+      "an error from the interpreter naming the option: it parsed the dash, which is the precondition, but check whether the option was *useful*"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.noshell.json"
+    ],
+    "hazards": [
+      "the same class exists wherever an encoding conversion sits between the input and a parser: codepage best-fit, Unicode normalisation (fullwidth dash/solidus), and legacy charset transcoding",
+      "the CWE published for this is 'argument injection' and the mitigation is an option separator \u2014 the conversion table is a platform fact you cannot patch away",
+      "probes must not contain the character they are testing for; the payload has to arrive as multi-byte text and become the metacharacter in transit",
+      "related but distinct from T-0022: there the interpreter is *given* the query string by design; here the platform's conversion creates the syntax"
+    ],
+    "non_transfers": [
+      "platforms whose conversion is strict (no best-fit substitution)",
+      "interpreter invocations that insert an option terminator before request-derived values"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "php": 0.9
+    }
+  },
+  "combines_with": [
+    "T-0022",
+    "T-0005"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "PHP 8.1 < 8.1.29 / 8.2 < 8.2.20 / 8.3 < 8.3.8 on Windows Apache + PHP-CGI (CVE-2024-4577)"
+  },
+  "provenance": [
+    {
+      "src": "sources/50e033990bc54b72-php4577-devcore.txt",
+      "author": "DEVCORE research (Orange Tsai, CVE-2024-4577 finder)",
+      "sha256": "50e033990bc54b725705ed63524b360c54a9733c567222a1f7df4963158f4a9b",
+      "corroborates": "the Best-Fit conversion of 0xAD to a hyphen, the CGI argument assembly, and the option chain to execution"
+    },
+    {
+      "src": "https://labs.watchtowr.com/no-way-php-strikes-again-cve-2024-4577/",
+      "author": "watchTowr Labs (independent re-analysis)",
+      "corroborates": "independent reproduction and the wider payloads that followed \u2014 thousands of exploitation attempts within days"
+    },
+    {
+      "src": "https://isc.sans.edu/diary/30994",
+      "author": "SANS Internet Storm Center (independent)",
+      "corroborates": "independent detection data from live exploitation"
+    },
+    {
+      "src": "MITRE/NVD CVE-2024-4577 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-78, affected versions, Windows + Apache + PHP-CGI condition"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2024-06-12; EPSS 1.000"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

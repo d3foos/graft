@@ -1,0 +1,188 @@
+{
+  "id": "T-0052",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A security label stored beside the file is not part of the file, so copying the file loses the label",
+  "index_line": "T-0052 \u00b7 EXEC \u00b7 an archive extractor writes members without propagating the internet-origin attribute \u00b7 c/any-archiver \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "python",
+      "node",
+      "rust",
+      "go"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-693",
+      "CWE-354"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A protection is assumed to travel with the content it protects. It does not: the 'this came from the internet' marking lives in a side-channel attached to the file record, not in the bytes. Any component that creates a *new* file from old bytes has to decide to carry the marking over \u2014 and an extractor that only thinks about content silently drops it.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker delivers an archive whose container carries the internet-origin marking, as any downloaded file does",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the user opens it with the extractor, which creates new filesystem entries for each member",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 3,
+      "does": "the new entries are created from the members' bytes only; the side-channel marking of the container is not re-applied",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the extracted payload now looks locally created, so the shell's 'opened from the internet' protections do not apply to it",
+      "primitive": "BYPASS",
+      "bypasses": "guard.format"
+    },
+    {
+      "n": 5,
+      "does": "the user (or a follow-on document) runs the payload with no warning dialog, in their own context",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.file.name": {
+      "value": "the archive and its members \u2014 the trust attribute lives on the container, the payload is one member inside it"
+    },
+    "guard.format": {
+      "value": "the origin marking (zone identifier / MotW): a *label*, not a format property \u2014 this is the guard that gets dropped"
+    },
+    "sink.file.write": {
+      "value": "the extraction write, which creates a new inode/record and must therefore re-apply every security attribute"
+    },
+    "encoding.path": {
+      "value": "member names, including nested paths, which decide where the unlabelled file lands"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the platform attaches a security label to downloaded files and enforces it at open time",
+      "check": {
+        "kind": "shell",
+        "spec": "powershell -c \"Get-Item .\\\\sample.zip | Get-ItemProperty -Name Zone.Identifier\" 2>/dev/null || echo 'no ADS label'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the extractor creates new files rather than preserving the container's attributes",
+      "check": {
+        "kind": "shell",
+        "spec": "extract a marked archive and query the extracted file's Zone.Identifier; absent = the bug"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the extracted member can be made executable or auto-loaded (double-click, shortcut, script)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "\\.lnk|\\.url|autorun|shell\\\\open",
+            "explorer.exe"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the extracted file has no origin marking although the archive that produced it did",
+      "double-clicking the extracted payload produces no security warning, while the same bytes downloaded directly would",
+      "the container's marking is still present \u2014 only the children lost it"
+    ],
+    "failure_like": [
+      "the extractor copies the marking to every member (the fixed behaviour)",
+      "the platform enforces execution policy independently of the marking"
+    ],
+    "false_positive": [
+      "a payload that runs only because the user disabled the protection \u2014 check the setting before claiming the bypass",
+      "an archive that was never marked in the first place: nothing was dropped"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "the general question is 'which security attributes are not part of the file?' \u2014 labels, ACLs, ownership, capabilities, xattrs, quarantine bits; every copier must carry them",
+      "this is the macOS quarantine-bit class and the Linux extended-attribute class as well; the Windows variant just has the most users",
+      "the archive is a wrapper: the payload never has to be the thing the user opened, which is why content scanning of the container misses it",
+      "the fix is in the extractor, not the OS \u2014 so a single unpatched archiver reopens the whole class on a patched machine"
+    ],
+    "non_transfers": [
+      "platforms that carry the origin decision inside the file's own metadata (or sign the payload)",
+      "extractors that explicitly propagate attributes"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.8,
+      "python": 0.7,
+      "node": 0.7,
+      "rust": 0.65,
+      "go": 0.65
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0049"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "7-Zip < 24.09 (CVE-2025-0411, ZDI-25-045)"
+  },
+  "provenance": [
+    {
+      "src": "sources/2e5dedd0d30a04e6-sevenzip-zdi.txt",
+      "author": "TrendAI Zero Day Initiative advisory ZDI-25-045 (CVE-2025-0411)",
+      "sha256": "2e5dedd0d30a04e6f617d006ccc4382b935f5738b0266c60e5ffc5ac169ad0d9",
+      "corroborates": "'7-Zip does not propagate the Mark-of-the-Web to the extracted files', the interaction requirement, and the fixed version 24.09"
+    },
+    {
+      "src": "http://www.openwall.com/lists/oss-security/2025/01/24/6",
+      "author": "oss-security (Openwall mailing list)",
+      "corroborates": "public disclosure thread with independent researcher analysis"
+    },
+    {
+      "src": "https://security.netapp.com/advisory/ntap-20250207-0005/",
+      "author": "NetApp Product Security",
+      "corroborates": "independent affected-product analysis"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-0411 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-693; Mark-of-the-Web bypass"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-02-06; EPSS 0.476"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

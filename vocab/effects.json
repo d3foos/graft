@@ -1,0 +1,20 @@
+{
+  "version": 4,
+  "note": "Attacker gains only. DESERIALIZE was removed in rev 2: it is a primitive (mechanism step), not an effect — a deserialization record claims the effect it yields (usually EXEC).",
+  "effects": {
+    "EXEC": "Attacker-chosen command runs on the host (shell or argv semantics — see sink.exec.* families).",
+    "CODE_EXEC": "Attacker-supplied code is evaluated in a runtime/engine context (eval, template, expression language).",
+    "FILE_READ": "Reads a file outside the intended tree or access scope.",
+    "FILE_WRITE": "Writes a file outside the intended tree — the RCE-adjacent flavor; prioritise over FILE_READ.",
+    "NET_CONNECT": "The server makes a request the attacker influenced (SSRF) — to internal services, metadata, or an attacker host.",
+    "SQL_EXEC": "Attacker-controlled SQL syntax reaches the database parser.",
+    "TEMPLATE_EVAL": "User input is evaluated by a template engine (subset of CODE_EXEC kept separate for engine fingerprinting).",
+    "AUTH_DECISION": "An authentication/authorization/validity check returns the wrong answer for the attacker.",
+    "MEM_READ": "Out-of-bounds or use-after-free read in native code.",
+    "MEM_WRITE": "Out-of-bounds or use-after-free write in native code.",
+    "INFO_LEAK": "Secrets, internal state, or errors disclosed beyond intended scope.",
+    "REDIRECT": "Open redirect / forwarder abuse.",
+    "EMAIL_SEND": "Attacker-triggered mail from the server.",
+    "LOG_INJECT": "Attacker data written into logs in a way that poisons downstream consumers."
+  }
+}

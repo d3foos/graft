@@ -1,0 +1,40 @@
+{
+  "family": "sink.api.introspection",
+  "effect": "INFO_LEAK",
+  "rev": 2,
+  "note": "GraphQL schema-disclosure surface per server implementation. All cells DOCUMENTED (no GraphQL servers installed in this box).",
+  "cells": {
+    "node": {
+      "sinks": [{"name": "Apollo Server / graphql-yoga"}, {"name": "GraphiQL/Playground left enabled"}],
+      "patterns": ["apollo-server", "graphql-yoga", "graphiql", "playground", "express-graphql"],
+      "verified": {"how": "documented", "source": "server docs", "needs_local_verification": true}
+    },
+    "python": {
+      "sinks": [{"name": "graphene / ariadne / strawberry"}],
+      "patterns": ["graphene", "ariadne", "strawberry", "flask-graphql", "/graphql"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    },
+    "php": {
+      "sinks": [{"name": "webonyx/graphql-php"}],
+      "patterns": ["graphql-php", "webonyx", "graphiql"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    },
+    "java": {
+      "sinks": [{"name": "graphql-java / spring-graphql / DGS"}],
+      "patterns": ["graphql-java", "spring-graphql", "dgs", "GraphiQL"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    },
+    "ruby": {
+      "sinks": [{"name": "graphql-ruby"}],
+      "patterns": ["graphql-ruby", "graphql/", "GraphiQL"],
+      "verified": {"how": "documented", "source": "gem docs", "needs_local_verification": true}
+    },
+    "go": {
+      "sinks": [{"name": "gqlgen"}],
+      "patterns": ["gqlgen", "graphql/handler"],
+      "verified": {"how": "documented", "source": "library docs", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["introspection maps the surface; authz must still be tested per field/mutation", "introspection disabled does not mean hidden: error suggestions and __typename leaks still enumerate"],
+  "non_transfers": ["REST-only backends", "public APIs whose schema is deliberately public"]
+}

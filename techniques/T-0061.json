@@ -1,0 +1,179 @@
+{
+  "id": "T-0061",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A CGI multiplexer makes every script in one directory reachable, including the forgotten ones",
+  "index_line": "T-0061 \u00b7 EXEC \u00b7 one endpoint dispatches to any CGI in a shared directory; a legacy script still calls the shell \u00b7 c \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "perl"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-78",
+      "CWE-1104"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Reachability is assumed to be the same as being linked: if the interface offers a function, a script exists for it. But a multiplexer that dispatches by name over a shared directory exposes every script in it \u2014 including the ones for features that were removed, whose code was never hardened because the feature was gone. The dispatcher is the attack surface; the directory is the catalogue.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker requests the shared CGI entry point with a parameter naming a different script",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the multiplexer normalises the name and dispatches to the corresponding file in the shared directory",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "a legacy script runs, still holding the input handling it had when its feature was supported",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 4,
+      "does": "a request field reaches a shell invocation built by string concatenation",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 5,
+      "does": "the command executes as the web server's account, which on the appliance is root",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the dispatcher parameter naming the script, plus the script's own parameter"
+    },
+    "sink.exec.shell": {
+      "value": "the legacy script's shell call built from a request field"
+    },
+    "encoding.shell": {
+      "value": "metacharacters accepted by the old handler, which few filters guard"
+    },
+    "guard.none": {
+      "value": "no authentication on the dispatcher and no input validation in the legacy script"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the device or app is reachable and the CGI directory is served",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sk -o /dev/null -w '%{http_code}\\n' 'https://HOST/cgi-bin/cgi_main.cgi'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "a shared dispatcher exposes multiple scripts by name",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "cgi_main|cgiMain|dispatch.*cgi|QUERY_STRING.*\\.cgi"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "a legacy script places a request field into a shell command",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "system\\(|popen\\(|exec\\(|sprintf\\(.*\\\".*%s"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a script reachable only through the dispatcher executes a command from a request field",
+      "the device returns command output or a side effect with no authentication",
+      "the dispatcher's own page does not mention the script \u2014 it is reachable only by name"
+    ],
+    "failure_like": [
+      "the dispatcher restricts names to a table of known-good scripts",
+      "the legacy scripts were deleted with the feature"
+    ],
+    "false_positive": [
+      "a 404 for the script name \u2014 the dispatcher refused it",
+      "a page that echoes the parameter into HTML without executing it"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "enumerate the CGI/plugin directory and request every file through the dispatcher; the ones the UI never calls are the interesting ones",
+      "appliance firmware is the usual home: one busybox CGI tree shared by several generations of the UI",
+      "these handlers predate input validation as a practice, so metacharacter payloads work without cleverness",
+      "related to T-0060 (orphan pages found by path): here the dispatcher is the catalogue, so the discovery is a name, not a directory listing"
+    ],
+    "non_transfers": [
+      "dispatchers restricted to an explicit name-to-handler table",
+      "modern frameworks routing every request through one controller"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.8,
+      "perl": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0060",
+    "T-0005"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Digiever DS-2105 Pro 3.1.0.71-11, time_tzsetup.cgi via cgi_main.cgi (CVE-2023-52163)"
+  },
+  "provenance": [
+    {
+      "src": "sources/d992bf83caad0902-digiever-txone.txt",
+      "author": "TXOne Networks research on Digiever CGI vulnerabilities",
+      "sha256": "d992bf83caad09025d4178b1d64ede1168567157bd8e2c22c284d1c5789dafa0",
+      "corroborates": "the shared CGI dispatcher, time_tzsetup.cgi command injection, and the companion arbitrary file read"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-12-22; EPSS 0.971"
+    },
+    {
+      "src": "MITRE/NVD CVE-2023-52163 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "time_tzsetup.cgi command injection; CWE-78"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.8
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

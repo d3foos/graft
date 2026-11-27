@@ -1,0 +1,211 @@
+{
+  "id": "T-0014",
+  "schema_version": 4,
+  "record_version": 3,
+  "title": "Vendor advisory chain: diff the affected/fixed build pair to prove unlisted sibling models still ship the pre-fix code",
+  "index_line": "T-0014 \u00b7 MEM_WRITE \u00b7 advisory affected+fixed build pair \u2192 normalized-disassembly diff \u2192 patch-absence in unlisted models \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-120",
+      "CWE-1104"
+    ],
+    "capec": [],
+    "effect": "MEM_WRITE",
+    "stage": "recon"
+  },
+  "invariant_violated": "A vendor publishes a patch and an affected-model table, and the table is treated as complete: every model shipping the vulnerable binary is assumed listed and fixed. The invariant that actually holds is that models are fixed only when someone ports the patch to their build.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "parse the advisory: the CVE family, the affected product table, and the fixed build identifiers",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 2,
+      "does": "download the listed model's last-affected and first-fixed builds (the pair the vendor itself published)",
+      "primitive": "READ"
+    },
+    {
+      "n": 3,
+      "does": "unwrap/extract both images (vendor container + filesystem), no execution",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 4,
+      "does": "disassemble the named daemon in both builds and normalize operands so inserted code does not shift the token stream",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 5,
+      "does": "sequence-diff the normalized streams -> fixed-only blocks (the patch) and vuln-only blocks (the code the patch removed)",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 6,
+      "does": "token-match the vuln-only blocks against every unlisted model's daemon, and match the fixed-only blocks too (a real check must not be confused with generic frame arithmetic)",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 7,
+      "does": "verdict: vuln-only present AND no substantive fixed-only block => unlisted model is unpatched; negative control = the fixed build must clear the vuln-only set",
+      "primitive": "COMPARE"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "the binary that parses attacker packets (the daemon named by the advisory)"
+    },
+    "sink.memory.copy": {
+      "value": "the size-unchecked copy/copy-family the vendor patch surrounds",
+      "equivalents": "vocab/equivalents/sink.memory.copy.json"
+    },
+    "guard.signature": {
+      "value": "vendor image wrapper + advisory affected-model table \u2014 the scope assumption being tested"
+    },
+    "size.length": {
+      "value": "packet length / field-length / field-offset checks the patch adds"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "advisory names a CVE family plus affected and fixed builds",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "faq/[0-9]+",
+            "CVE-20[0-9]{2}-[0-9]{4,}"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the named daemon exists in the target's extracted rootfs and is auto-started",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "tdpServer",
+            "tmpServer"
+          ],
+          "paths": [
+            "usr/bin",
+            "bin",
+            "sbin",
+            "etc/init.d",
+            "etc/rc.local"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the unlisted model's build date postdates the vendor fix, so absence is not just an older release (grep the image-header version string in the extracted image)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "soft_ver:[0-9.]+ Build [0-9]+"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "same daemon source generation across builds (compiler signature / source line markers)",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "scan .rodata of both builds for 'GCC: (OpenWrt GCC <ver> <hash>+r#####)' and shared source markers; require the same compiler+r-number family"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "vuln-only blocks from the advisory's affected build present in the unlisted model",
+      "fixed-only matches are only generic frame/call setup, no length or offset validation",
+      "same compiler signature and source-file markers across builds (same source generation)"
+    ],
+    "failure_like": [
+      "vuln-only blocks absent => model is not affected or the daemon differs",
+      "a substantive fixed-only validation block present => patch was ported, advisory table is fine"
+    ],
+    "false_positive": [
+      "counting fixed-only matches without reading them (frame-pointer arithmetic matches trivially in every build)",
+      "concluding from size or hash differences alone; build hashes always differ",
+      "treating a static diff as proof of runtime reachability \u2014 it is a patch-absence oracle only"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.memory.copy.json"
+    ],
+    "hazards": [
+      "vendor images are often encrypted: recover the container key with public-key operations only and never claim the vendor's private key was used",
+      "the fix may be split across daemons (the advisory's second binary) \u2014 check both",
+      "an unlisted model may be absent from the table simply because it does not ship the daemon"
+    ],
+    "non_transfers": [
+      "closed builds where no fixed pair was ever published",
+      "daemons rebuilt with different compilers/optimization, where normalization cannot align the streams"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.8
+    }
+  },
+  "combines_with": [
+    "T-0004",
+    "T-0008"
+  ],
+  "probes": [
+    {
+      "kind": "static",
+      "path": "probes/T-0014/grep.json"
+    }
+  ],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "public vendor advisory affected/fixed firmware pair (CVE-2025-58455 / CVE-2025-58077)"
+  },
+  "provenance": [
+    {
+      "src": "https://www.tp-link.com/us/support/faq/4943/",
+      "author": "TP-Link",
+      "corroborates": "CVE-2025-58455 family, affected/fixed model table, patch existence"
+    },
+    {
+      "src": "MITRE CVE-2025-58455 / CVE-2025-58077 records (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE",
+      "corroborates": "mechanism class: heap overflow via packet length/offset validation in tdpserver/tmpserver"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline static)"
+  },
+  "ttl_days": 365
+}

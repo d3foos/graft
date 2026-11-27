@@ -1,0 +1,188 @@
+{
+  "id": "T-0069",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A cookie the extension wrote for itself is unserialized as trusted object state on every request, with no class restriction",
+  "index_line": "T-0069 \u00b7 EXEC \u00b7 the CacheWarmer cookie feeds PHP's native unserialize() on every storefront request, unauthenticated; Magento's shipped classes complete the gadget chain \u00b7 php \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php",
+      "python",
+      "ruby",
+      "node",
+      "java"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-502"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A cookie the extension itself writes was treated as trustworthy state from a peer component. Cookie values are client bytes: the plugin ran them through native unserialize(), choosing no class restriction, on every storefront request \u2014 authenticated or not.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "any storefront request carries the extension's cookie; the value is fully attacker-controlled (marker + base64)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the plugin strips the marker and base64-decodes the payload on every request \u2014 warmer traffic is not required",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the decoded bytes reach PHP's native unserialize() with no allowed-classes argument: the attacker names the classes instantiated",
+      "primitive": "DESERIALIZE"
+    },
+    {
+      "n": 4,
+      "does": "magic methods on classes the platform and its dependencies already ship fire the gadget chain (Monolog handlers observed in the wild)",
+      "primitive": "CALLBACK"
+    },
+    {
+      "n": 5,
+      "does": "the chain reaches command execution \u2014 one cookie, no authentication, no admin session, no config toggle",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.cookie": {
+      "value": "the CacheWarmer cookie \u2014 written by the extension for its crawler, read by it on every request"
+    },
+    "guard.none": {
+      "value": "no authentication, no admin session, no config toggle \u2014 and no allowed-classes restriction on the unserialize call"
+    },
+    "sink.deser.native": {
+      "value": "PHP native unserialize() on client bytes"
+    },
+    "gadget.magic-method": {
+      "value": "destruct/wakeup gadgets from classes Magento and its dependencies already ship (Monolog\\Handler\\* observed in live payloads)"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a cookie path reaches native unserialize() with no second (allowed_classes) argument",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "unserialize\\s*\\(",
+            "CacheWarmer"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the extension is present below its fixed version (often bundled inside other vendor packages, not directly installed)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "Mirasvit|module-cache-warmer|CacheWarmer"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the storefront answers and accepts the cookie on ordinary pages",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -H 'Cookie: CacheWarmer=CacheWarmer:VEVTVA==' http://HOST/"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a single crafted cookie yields command execution with no authentication",
+      "request signature: CacheWarmer cookie whose base64 payload starts with serialized-object markers (Tz/Qz/Yt) \u2014 observed live since disclosure"
+    ],
+    "failure_like": [
+      "unserialize called with allowed_classes rejects unknown class names",
+      "the module updated past 1.11.12 (fix shipped 2026-05-25)"
+    ],
+    "false_positive": [
+      "finding unserialize() is not the finding \u2014 this platform's gadget inventory is public and deterministic, but the chain must still be shown to fire",
+      "a WAF blocking serialized-object cookies is a mitigation, not absence of the bug"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.deser.native.json"
+    ],
+    "hazards": [
+      "every 'the client echoes back state we handed them' channel: cookies, cache keys, signed-but-not-encrypted tokens \u2014 the extension trusted its own vocabulary",
+      "the gadget inventory is the dependency tree: Monolog ships with thousands of installs, making exploitation deterministic rather than blind (contrast T-0007)",
+      "bundled distribution hides the surface: merchants ran the warmer without ever installing it directly (~6,000 stores ran vendor extensions)",
+      "python/pickle and ruby/Marshal cookie paths are the same mechanism with different encodings"
+    ],
+    "non_transfers": [
+      "unserialize sites with allowed_classes or signed-and-verified state",
+      "stores without the extension or past 1.11.12"
+    ],
+    "confidence": {
+      "php": 0.92,
+      "python": 0.6,
+      "ruby": 0.55,
+      "node": 0.5,
+      "java": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0007",
+    "T-0029"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Mirasvit Full Page Cache Warmer for Magento 2 < 1.11.12 (CVE-2026-45247, CVSS 3.1 9.8; actively exploited)"
+  },
+  "provenance": [
+    {
+      "src": "sources/dad1ee7a3d440dd5-sansec-mirasvit-cache-warmer.txt",
+      "author": "Sansec Forensics Team",
+      "sha256": "dad1ee7a3d440dd5f067c4e84b589aa5a9daf24b000ff583d9d0a30f49bb1fcd",
+      "corroborates": "the finder's disclosure: CacheWarmer cookie reaches native unserialize() with no class restriction on every storefront request; warmer session-state design; gadget chains from Magento/Monolog classes; CWE-502; fix 1.11.12; detection signature CacheWarmer: + base64 serialized objects"
+    },
+    {
+      "src": "sources/fa33ff3bb0569a83-imperva-mirasvit-45247.txt",
+      "author": "Imperva",
+      "sha256": "fa33ff3bb0569a83439db9fe3ec2891d2482cab095b8eb0de84bac0416d183ec",
+      "corroborates": "independent confirmation and live observation: active exploitation attempts with serialized PHP object payloads via the cookie; observed Monolog\\Handler\\SyslogUdpHandler / BufferHandler / FingersCrossedHandler gadgets; CVSS 9.8"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-45247 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2026-45247 description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-06-03"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

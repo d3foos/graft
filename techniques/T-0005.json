@@ -1,0 +1,209 @@
+{
+  "id": "T-0005",
+  "schema_version": 4,
+  "record_version": 4,
+  "title": "Command injection through non-obvious sources: filenames, URLs, archive members, delegates",
+  "index_line": "T-0005 \u00b7 EXEC \u00b7 the source is the trick (filename/config/delegate), metachars OR argv flags \u00b7 corroborated",
+  "langs": {
+    "origin": "node",
+    "transferable": [
+      "python",
+      "php",
+      "ruby",
+      "java",
+      "dotnet",
+      "go",
+      "rust",
+      "c"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-78"
+    ],
+    "capec": [],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "The app treats a value as inert data; a subprocess \u2014 or the shell it invokes \u2014 treats it as syntax, or as a flag.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "attacker-controlled value enters via a non-obvious source: uploaded filename, remote URL, archive member name, config/manifest field, delegate placeholder",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "value spliced into a command string (shell family) or an argv array (no-shell family)",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 3,
+      "does": "shell parses metachars, or the target tool parses the value as an option/argv[0]",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "escaping defeated (missing shellescape, delegate templates that never quote) or flags inject directly",
+      "primitive": "BYPASS",
+      "bypasses": "guard.escaping"
+    },
+    {
+      "n": 5,
+      "does": "command executes",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.file.name": {
+      "value": "uploaded/processed file's name \u2014 the highest-yield non-obvious source"
+    },
+    "sink.exec.shell": {
+      "value": "shell-semantics subprocess (child_process.exec, os.system, system())",
+      "equivalents": "vocab/equivalents/sink.exec.shell.json"
+    },
+    "sink.exec.noshell": {
+      "value": "argv subprocess \u2014 argument injection via leading '-' flags (git --upload-pack, curl -K, ssh -o)",
+      "equivalents": "vocab/equivalents/sink.exec.noshell.json"
+    },
+    "guard.escaping": {
+      "value": "shellescape/shlex.quote/array-argv allowlist \u2014 what must be absent or defeated"
+    },
+    "delegate.tool": {
+      "value": "external tool delegate: ImageMagick delegates.xml (%f/%u), ESLint processors, git hooks, build scripts"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "subprocess-capable runtime with a call site",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "child_process|subprocess|os\\.system|Runtime|ProcessBuilder|system\\s*\\(|popen|proc_open|exec\\s*\\("
+          ],
+          "paths": [
+            "src",
+            "app",
+            "lib"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "delegate or expansion template present",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "delegates\\.xml|%f|%u|\\{filename\\}|\\$\\{file\\}"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "attacker value reaches the call site",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "req\\.(file|body|query)|filename|file\\.name|entry\\.name"
+          ],
+          "paths": [
+            "src",
+            "app",
+            "lib",
+            "routes"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "varies \u2014 upload/processing features usually authenticated user"
+    }
+  ],
+  "observables": {
+    "success": [
+      "captured marker output from the spawned command (id/whoami/echo)",
+      "file created by the spawned command at a known path",
+      "error message echoes the expanded command string"
+    ],
+    "failure_like": [
+      "input quoted correctly (shellescape/shlex.quote)",
+      "argv passed without shell and no flag-shaped control \u2014 metachars print literally"
+    ],
+    "false_positive": [
+      "build-time constants, not request input",
+      "delegate/config files the attacker cannot reach"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json",
+      "vocab/equivalents/sink.exec.noshell.json"
+    ],
+    "hazards": [
+      "no-shell runtimes (java/dotnet/go/rust, argv forms) shift the bug class to argument injection \u2014 pick the family by the call, not by habit",
+      "tool delegates parse their own flags \u2014 read the tool's option table before crafting"
+    ],
+    "non_transfers": [
+      "strict argv allowlists with no option-shaped control",
+      "WASM/isolated sandboxes without process capability"
+    ],
+    "confidence": {
+      "node": 0.9,
+      "python": 0.85,
+      "php": 0.85,
+      "ruby": 0.8,
+      "java": 0.7,
+      "dotnet": 0.7,
+      "go": 0.7,
+      "c": 0.8
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0008"
+  ],
+  "probes": [
+    {
+      "kind": "grep",
+      "path": "probes/T-0005/grep.json"
+    }
+  ],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "corpus + public delegate advisories"
+  },
+  "provenance": [
+    {
+      "src": "skill:command-injection",
+      "author": "0security playbook corpus",
+      "corroborates": "method detail + verified wins (ImageMagick delegates, ESLint processor filenames)"
+    },
+    {
+      "src": "MITRE CWE-78",
+      "author": "MITRE",
+      "corroborates": "mechanism class"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "medium"
+  },
+  "ttl_days": 365
+}

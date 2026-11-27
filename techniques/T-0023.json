@@ -1,0 +1,218 @@
+{
+  "id": "T-0023",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The credential check is the injection point, and SQL file-write shadows an importable module instead of a web shell",
+  "index_line": "T-0023 \u00b7 EXEC \u00b7 pre-auth SQL in the token lookup, then OUTFILE writes a module onto the interpreter's import path \u00b7 c/perl/python \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "python",
+      "perl",
+      "php",
+      "ruby",
+      "node"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-89",
+      "CWE-668"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Two separate assumptions. First: a bearer token is treated as an opaque identifier, so the query that looks it up is written as string concatenation \u2014 the one code path where nobody expects user syntax is the authentication fast path. Second: an SQL file-write primitive is assumed to need a web-executable directory; it does not, it needs a directory the *interpreter* reads code from.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a request reaches a public endpoint backed by a native handler that parses the Authorization header before any auth decision",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the header value is copied into a fixed buffer verbatim, so it becomes a token string in the process image",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the token is concatenated into the query that resolves the token to a user, so the injection is evaluated as part of the authentication lookup",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 4,
+      "does": "the database parser executes attacker SQL before any credential has been validated \u2014 pre-authentication",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 5,
+      "does": "the database account can write files (`INTO OUTFILE` available to a privileged DB user), so the query writes an attacker-authored module into a directory the interpreter searches",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 6,
+      "does": "an unauthenticated CGI/endpoint imports that module name, the shadowing file wins over the real package, and the interpreter executes it",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 7,
+      "does": "the import runs in the server process, giving command execution under that service account",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.header": {
+      "value": "the Authorization / bearer token header \u2014 the credential itself is the payload, so the endpoint is unauthenticated by definition"
+    },
+    "sink.sql.concat": {
+      "value": "the token\u2192user lookup query (get_user_by_token-shaped), the last place anyone looks for SQLi"
+    },
+    "sink.file.write": {
+      "value": "SQL file-write (`INTO OUTFILE`/`DUMPFILE`), available when the DB account is privileged \u2014 the DB is a file-write gadget"
+    },
+    "fs.path.join": {
+      "value": "the *interpreter's import path*: site-packages, a script's directory, `.pth`/`PYTHONPATH` entries, Perl `@INC` \u2014 pick a writable one rather than a webroot"
+    },
+    "delegate.tool": {
+      "value": "the secondary interpreter invoked by a CGI/handler that imports the shadowed library \u2014 the execution delegate, not the SQL sink"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "a public endpoint's handler runs before authentication and reads a credential header",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "Authorization|authorization",
+            "get_header\\(|getHeaders\\(|Bearer"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "that value reaches a query by concatenation rather than a bound parameter",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "sprintf\\([^)]*SELECT|snprintf\\([^)]*select|strcat\\([^)]*select|\\\" *SELECT .*\\\" *\\+|\\.format\\(.*SELECT|f\\\"SELECT"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the DB account can write files (INTO OUTFILE requires FILE privilege and secure_file_priv permitting the target directory)",
+      "check": {
+        "kind": "shell",
+        "spec": "mysql -e 'SELECT @@secure_file_priv, CURRENT_USER();' 2>/dev/null; mysql -e 'SHOW GRANTS FOR CURRENT_USER();' 2>/dev/null | grep -i FILE  # read-only privilege probe: secure_file_priv + FILE grant; do not write during a precondition check"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "a directory on the interpreter's search path is writable by the DB/service account, and a CGI/handler imports a shadowable module",
+      "check": {
+        "kind": "shell",
+        "spec": "python3 -c 'import sys;[print(p) for p in sys.path]'; perl -e 'print join(\"\\n\",@INC)'; # cross-check against writability of each entry by the DB user"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a quote in the Authorization header produces a SQL error / different response with no session \u2014 pre-auth, no credential needed",
+      "the written file appears in an interpreter path directory, not a webroot, and its import triggers execution on the next request to the importing endpoint",
+      "the effect is code execution with the *service* account, reachable without authentication"
+    ],
+    "failure_like": [
+      "the token is bound as a parameter, or looked up through a non-SQL store (LDAP, shared memory) \u2014 nothing to inject",
+      "the DB account is least-privilege (`FILE` not granted, `secure_file_priv` set) \u2014 the injection stays a read primitive",
+      "no writable directory on the import path"
+    ],
+    "false_positive": [
+      "an auth error for a bad token \u2014 the endpoint rejects everything without proving the token reached SQL; use a payload that only changes timing or error text, never one that could be a valid token",
+      "a file written into a webroot that the web server does not execute (or that is not reachable) \u2014 not the end of the chain",
+      "a module shadow that is never imported by anything the attacker can reach"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.sql.concat.json",
+      "vocab/equivalents/fs.path.join.json"
+    ],
+    "hazards": [
+      "appliance firmware means the sink is a native handler in a binary",
+      "`INTO OUTFILE` constraints vary (FILE privilege, secure_file_priv, NO_BACKSLASH_ESCAPES); enumerate them before planning the write",
+      "the import-shadow step needs the shadowed name to be imported *after* the write and by a process the attacker can invoke"
+    ],
+    "non_transfers": [
+      "parameterised token lookups (the whole record collapses)",
+      "unprivileged DB accounts and locked-down secure_file_priv",
+      "interpreter deployments with a read-only site-packages and no writable sys.path entry"
+    ],
+    "confidence": {
+      "python": 0.75,
+      "perl": 0.7,
+      "php": 0.7,
+      "ruby": 0.65,
+      "node": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0001",
+    "T-0006"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "FortiWeb 7.0.0\u20137.6.3 (CVE-2025-25257), fixed per FG-IR-25-151"
+  },
+  "provenance": [
+    {
+      "src": "sources/9b4923784e3366a6-pwner-fortiweb-cve-2025-25257.txt",
+      "author": "0xShaq (pwner.gg root-cause write-up)",
+      "sha256": "9b4923784e3366a6e57eeaceaaaa8d47598efa56bde1817e6552444e4eefa888",
+      "corroborates": "the native SetHandler, `char token[]` unvalidated, the concat in get_fabric_user_by_token, the pre-auth request shape, the INTO OUTFILE \u2192 matplotlib.py import-shadow escalation, and the researcher's independent-discovery hash"
+    },
+    {
+      "src": "https://fortiguard.fortinet.com/psirt/FG-IR-25-151",
+      "author": "Fortinet PSIRT (FG-IR-25-151)",
+      "corroborates": "CWE-89, affected version ranges 7.0.0\u20137.6.3, unauthenticated"
+    },
+    {
+      "src": "https://www.exploit-db.com/exploits/52473",
+      "author": "Exploit-DB entry 52473",
+      "corroborates": "independent published exploitation"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-25257 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVSS 3.1 AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H, reference set"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-07-18, due 2025-08-08; SSVC automatable=yes"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

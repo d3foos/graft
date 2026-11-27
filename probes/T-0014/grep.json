@@ -1,0 +1,18 @@
+{
+  "kind": "static",
+  "technique": "T-0014",
+  "note": "advisory-chain differential probe: static patch-absence oracle, never a runtime proof",
+  "checks": [
+    "locate the daemon named by the advisory in every extracted rootfs (usr/bin/<daemon>)",
+    "require the advisory's listed model to have BOTH an affected and a fixed build in hand",
+    "disassemble .text of both with capstone (ARM/Thumb per ELF flags), normalize PC-relative immediates and literal pools",
+    "SequenceMatcher over normalized tokens -> fixed-only blocks (patch) / vuln-only blocks (vulnerable code)",
+    "token-match the vuln-only blocks (>=5 insns) in every unlisted model's daemon; also report fixed-only matches so a real check is not confused with generic frame arithmetic"
+  ],
+  "oracle_ladder": ["static", "local_repro", "crash"],
+  "false_positive_guard": [
+    "a fixed-only match must be read, not counted: frame-pointer arithmetic and call setup match trivially",
+    "different build hashes / sizes prove nothing by themselves; the claim is patch-absence",
+    "no emulator run => no claim about runtime reachability of the overflow"
+  ]
+}

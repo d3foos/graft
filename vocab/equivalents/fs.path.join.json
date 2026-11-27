@@ -1,0 +1,58 @@
+{
+  "family": "fs.path.join",
+  "effect": "FILE_WRITE",
+  "rev": 2,
+  "note": "THE join-trap table, per language. Rev 1 shipped one conflated '*' footnote across six languages; two of the locally-testable cells were wrong (Node path.join and Ruby File.join do NOT reset) and Rust was omitted entirely (Path::join REPLACES on absolute).",
+  "cells": {
+    "python": {
+      "primitive": "os.path.join",
+      "resets_on_absolute": true,
+      "patterns": ["os\\.path\\.join\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/py_path_join.py", "what": "os.path.join('/base','/etc/passwd') == '/etc/passwd' (resets)", "date": "2026-11-20", "box": "python 3.12.3"}
+    },
+    "node": {
+      "primitive": "path.join (no reset) / path.resolve (resets)",
+      "resets_on_absolute": false,
+      "patterns": ["path\\.(join|resolve)\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/node_path_join.js", "what": "join → /base/etc/passwd; resolve → /etc/passwd. The reset primitive in Node is resolve, not join (rev-1 error).", "date": "2026-11-20", "box": "node v24.21.0"}
+    },
+    "ruby": {
+      "primitive": "File.join",
+      "resets_on_absolute": false,
+      "patterns": ["File\\.join\\s*\\(", "File\\.expand_path"],
+      "verified": {"how": "executed", "test": "tests/equiv/ruby_path_join.rb", "what": "File.join('/base','/etc/passwd') == '/base/etc/passwd' (no reset; rev-1 error)", "date": "2026-11-20", "box": "ruby 3.2.3"}
+    },
+    "php": {
+      "primitive": "naive '.' concat; realpath() collapses but does not reset",
+      "resets_on_absolute": false,
+      "patterns": ["realpath\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/php_path_concat.php", "what": "concat keeps prefix; realpath('/base/../etc/passwd') == '/etc' (collapses dotdot, does not 'reset')", "date": "2026-11-20", "box": "php 8.3.6"}
+    },
+    "dotnet": {
+      "primitive": "Path.Combine",
+      "resets_on_absolute": true,
+      "patterns": ["Path\\.Combine\\s*\\("],
+      "verified": {"how": "documented", "source": ".NET docs: 'If path2 contains an absolute path, this function returns path2'", "needs_local_verification": true}
+    },
+    "java": {
+      "primitive": "Path.resolve (resets) / Paths.get (does not clean or reset)",
+      "resets_on_absolute": true,
+      "patterns": ["\\.resolve\\s*\\(", "Paths\\.get\\s*\\("],
+      "verified": {"how": "documented", "source": "java.nio.file.Path docs: resolve returns the absolute argument", "needs_local_verification": true}
+    },
+    "go": {
+      "primitive": "filepath.Join — joins and Cleans, does not reset",
+      "resets_on_absolute": false,
+      "patterns": ["filepath\\.Join\\s*\\("],
+      "verified": {"how": "documented", "source": "Go path/filepath docs (Join semantics: Clean of concatenated elements)", "needs_local_verification": true}
+    },
+    "rust": {
+      "primitive": "PathBuf::push / Path::join — an absolute argument REPLACES the buffer",
+      "resets_on_absolute": true,
+      "patterns": ["\\.push\\s*\\(", "\\.join\\s*\\("],
+      "verified": {"how": "documented", "source": "Rust std docs: 'if path is absolute, it replaces the current path'", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["the correct guard is resolve-then-prefix-check (assert resolved starts with base+sep) — checking the RAW input before decoding is bypassable", "Windows adds ..\\ and drive-absolute forms; test both separators", "a reset-primitive language (python/dotnet/java-resolve/rust) means an absolute input needs NO dotdot at all"],
+  "non_transfers": ["object stores with opaque keys (no filesystem semantics)", "in-memory path handling"]
+}

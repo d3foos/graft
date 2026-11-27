@@ -1,0 +1,190 @@
+{
+ "id": "T-0076",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "A request that dies on a memory limit leaves the session upload-progress pointer published, and the next request URL-encodes the freed heap into a cookie",
+ "index_line": "T-0076 · MEM_READ · RFC1867 upload-progress state survives an OOM abort; next request reads reclaimed worker heap into PHPSESSID · c · corroborated",
+ "langs": {
+  "origin": "c",
+  "transferable": [
+   "c",
+   "cpp",
+   "php",
+   "python"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-416",
+   "CWE-908",
+   "CWE-200"
+  ],
+  "capec": [],
+  "effect": "MEM_READ",
+  "stage": "impact"
+ },
+ "invariant_violated": "PHP assumed an aborted request cannot leave pre-initialisation session state behind: the upload-progress decoder publishes request-owned bookkeeping before module initialisation completes, and the fatal-error path destroys the request heap without un-defining that worker-global — so the next request on the same worker reads a pointer into freed memory.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a multipart RFC1867 request carrying PHPSESSID and PHP_SESSION_UPLOAD_PROGRESS fields reaches PHP before application code runs"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the Session upload-progress handler initialises session state in the pre-initialisation window and publishes a request-owned id/string in PS(id)"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "a fatal out-of-memory error aborts the request before the matching cleanup runs"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "PHP destroys the request heap while the worker-global still points into it"
+  },
+  {
+   "n": 5,
+   "primitive": "PARSE",
+   "does": "a later multipart request on the same worker reaches the upload-progress cleanup path before normal Session initialisation resets the pointer"
+  },
+  {
+   "n": 6,
+   "primitive": "READ",
+   "does": "PHP treats the stale pointer and length as a live zend_string and URL-encodes the reclaimed bytes into the PHPSESSID response cookie"
+  }
+ ],
+ "slots": {
+  "source.http.body": {
+   "value": "a multipart RFC1867 body with PHP_SESSION_UPLOAD_PROGRESS and PHPSESSID fields, parsed before any application code"
+  },
+  "source.http.cookie": {
+   "value": "the PHPSESSID cookie; the same header is also the disclosure channel on the way out"
+  },
+  "sink.deser.native": {
+   "value": "the session upload-progress decoder that unserialises request-owned state into worker-globals"
+  },
+  "lifetime.object": {
+   "value": "PS(id) survives the request that owned the allocation — the use-after-free core"
+  },
+  "oracle.channel": {
+   "value": "the reclaimed heap is URL-encoded into a Set-Cookie PHPSESSID value the attacker can read"
+  },
+  "guard.none": {
+   "value": "no application code needs to run, and session_start() is not required — the bug is below the app layer"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the deployment runs an affected PHP and leaves session upload-progress enabled",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "session.upload_progress|PHP_SESSION_UPLOAD_PROGRESS|session\\.serialize_handler"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the PHP build is in the affected version range",
+   "check": {
+    "kind": "shell",
+    "spec": "php -v 2>/dev/null | head -1; php -r 'echo PHP_VERSION, \"\\n\";' 2>/dev/null"
+   }
+  },
+  {
+   "kind": "reachability",
+   "expr": "the web tier accepts multipart POSTs and answers with headers",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -X POST http://HOST/ -F 'PHP_SESSION_UPLOAD_PROGRESS=probe' -F 'f=@/etc/hostname'"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a Set-Cookie PHPSESSID value that decodes to bytes the attacker never sent (other clients' data, environment strings, binary)",
+   "the disclosed region is attacker-sized and repeated requests on the same worker yield different heap contents"
+  ],
+  "failure_like": [
+   "patched PHP returns a normal session id",
+   "upload-progress is disabled (session.upload_progress.enabled=0) so the pre-init path is never taken"
+  ],
+  "false_positive": [
+   "a long random-looking PHPSESSID is normal — require decoded bytes that are recognisably foreign data",
+   "a 500 from the memory limit alone is the abort, not the disclosure; the leak is observed on the following request"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any worker-pool runtime that decodes request data before its per-request reset runs",
+   "the prerequisite is an abort path the attacker can trigger deterministically (memory limit, timeout, fatal error)",
+   "the output channel can be anything that echoes worker state: a header, a cookie, an error page"
+  ],
+  "non_transfers": [
+   "process-per-request models (CGI without a persistent worker)",
+   "runtimes that reset pre-init state unconditionally in a finally/atexit path"
+  ],
+  "confidence": {
+   "c": 0.85,
+   "cpp": 0.6,
+   "php": 0.5,
+   "python": 0.4
+  }
+ },
+ "combines_with": [
+  "T-0015"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "PHP core session upload-progress handling, all supported branches before the 2026-10-21 fix (CVE-2026-109618)"
+ },
+ "provenance": [
+  {
+   "src": "sources/86487f00f42c0b5e-php2shell-wiz.txt",
+   "author": "Wiz Research",
+   "sha256": "86487f00f42c0b5e5b89c8358eadf2ce32daf855fa98516dfe153bb5240f3f1c",
+   "corroborates": "CVE-2026-109618 upload-progress unserializer use-after-free: Session decodes upload-progress data in the pre-initialisation window and stores request-owned bookkeeping in BG(unserialize)/PS(id); a fatal allocation failure destroys the request heap and leaves the global published; a later multipart request on the same worker URL-encodes the reclaimed heap into a PHPSESSID response cookie"
+  },
+  {
+   "src": "sources/d67cc503491adba7-php2shell-arcticwolf.txt",
+   "author": "Arctic Wolf Labs",
+   "sha256": "d67cc503491adba7d0d5d622cb0a8db1d2b012cf6277919e867c642a0e95df36",
+   "corroborates": "independent analysis of PHP2Shell: both CVEs are memory-safety bugs in PHP fatal-error handling that leave corrupted worker state for a later request; documents widescale scanning of upload-progress/session-poisoning paths and command-execution validation attempts"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-109618 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-109618 description and CWE"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2026-10-26"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.85
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

@@ -1,0 +1,49 @@
+{
+  "id": "T-0012", "schema_version": 4, "record_version": 1,
+  "title": "HTTP request smuggling: proxy/back-end framing disagreement",
+  "index_line": "T-0012 · AUTH_DECISION · CL.TE/TE.CL/H2 downgrade · timing oracle first · corroborated",
+  "langs": { "origin": "java", "transferable": ["node", "php", "python", "ruby", "go", "dotnet", "cpp"] },
+  "class": { "cwe": ["CWE-444"], "capec": [], "effect": "AUTH_DECISION", "stage": "impact" },
+  "invariant_violated": "The front-end and back-end disagree about where this request ends; the smuggled prefix becomes the start of the next request.",
+  "mechanism": [
+    { "n": 1, "does": "attacker sends a request with ambiguous framing (dual CL+TE, obfuscated TE, H2 with lying CL)", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "front-end picks one framing interpretation and forwards the bytes", "primitive": "PARSE" },
+    { "n": 3, "does": "bypass: the back-end honours the other header — TE obfuscation (xchunked, space-before-colon, duplicate-with-invalid, identity, case) or H2 downgrade", "primitive": "BYPASS", "bypasses": "guard.pipeline" },
+    { "n": 4, "does": "back-end treats the smuggled suffix as the start of the next request", "primitive": "PARSE" },
+    { "n": 5, "does": "impact: next user's request answered by attacker-chosen routing — auth bypass, credential capture, cache poisoning", "primitive": "AUTHZ_CHECK" }
+  ],
+  "slots": {
+    "source.http.request": { "value": "the smuggled second request (GET /admin, partial request for the next user to complete)" },
+    "proxy.desync": { "value": "the CL/TE pair disagreement — CL.TE, TE.CL, TE.TE, H2.CL" },
+    "encoding.http-framing": { "value": "dual CL+TE · Transfer-Encoding:xchunked · 'Transfer-Encoding : chunked' (space) · \\x0b variant · duplicate-with-second-invalid · identity · H2 frame with CL" },
+    "guard.pipeline": { "value": "proxy normalization + patch state — dual-header rejection is the healthy (resisting) behaviour" },
+    "oracle.timing": { "value": "response-time stall on the CL.TE probe — the safe first step" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "HTTP/1.1 keep-alive path through a proxy pair (or H2 front-end downgrading to H1)", "check": { "kind": "grep", "spec": { "patterns": ["proxy_pass|haproxy|nginx|apache|Traffic Server|X-Forwarded"], "paths": ["conf", "etc", "deploy", "k8s", "."] } } },
+    { "kind": "dependency", "expr": "front-end/back-end split exists (single-server deployments are not smuggleable)", "check": { "kind": "grep", "spec": { "patterns": ["upstream|proxy_pass|bind|listen"], "paths": ["conf", "etc", "deploy"] } } },
+    { "kind": "reachability", "expr": "attacker-controlled bytes on a keep-alive connection reach the pair", "check": { "kind": "grep", "spec": { "patterns": ["Transfer-Encoding|Content-Length"], "paths": ["conf", "etc", "src"] } } },
+    { "kind": "auth", "expr": "none — framing confusion needs no authentication" }
+  ],
+  "observables": {
+    "success": ["timing stall on the CL.TE probe (back-end waits for a chunk that never comes)", "next legitimate request answered with the smuggled GET's response (known-404 echo)", "another user's request body/headers appended to the smuggled partial request (credential capture)"],
+    "failure_like": ["pair rejects dual CL+TE (patched — good sign)", "both layers agree on framing — no desync", "CDN already normalizes classic vectors"],
+    "false_positive": ["timing noise from network jitter (repeat the probe before claiming a stall)", "response splitting without a proxy pair — different bug class"]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": ["the vulnerability lives in the proxy/backend PAIR, not a language — fingerprints: old HAProxy, nginx 1.x, Apache Traffic Server, custom proxies", "keep-alive mandatory; curl normalizes headers — raw sockets required", "H2 smuggling needs the proxy to downgrade to HTTP/1.1 for the back-end"],
+    "non_transfers": ["single-server, no-proxy deployments", "major CDNs for the classic vectors (patched — focus custom stacks)"],
+    "confidence": { "java": 0.7, "node": 0.65, "php": 0.6, "python": 0.6, "ruby": 0.6, "go": 0.6, "dotnet": 0.6, "cpp": 0.65 }
+  },
+  "combines_with": [],
+  "probes": [ { "kind": "grep", "path": "probes/T-0012/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "sources/f9cfa05b74a8fb3c-src_playbook_smuggling.txt", "author": "0security playbook corpus", "sha256": "f9cfa05b74a8fb3cd301fed503ea2b1f7322058564ed42130acb677a1d1f89ca", "corroborates": "method detail (CL.TE/TE.CL/TE.TE probes, obfuscation set, confirmation oracles)" },
+    { "src": "MITRE CWE-444", "author": "MITRE", "corroborates": "mechanism class (inconsistent interpretation of HTTP requests)" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.75 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "medium" },
+  "ttl_days": 365
+}

@@ -1,0 +1,37 @@
+{
+  "family": "sink.exec.shell",
+  "effect": "EXEC",
+  "shell_semantics": true,
+  "rev": 2,
+  "note": "Subprocess APIs that invoke a shell: metacharacter injection works. Languages without a shell entry are in sink.exec.noshell. Rev 1 merged both into one row and marked only Go/Rust 'no shell' — Java and .NET were wrongly implied shell-capable.",
+  "cells": {
+    "php": {
+      "sinks": [{"name": "system(...)"}, {"name": "exec(...)"}, {"name": "shell_exec(...)"}, {"name": "passthru(...)"}, {"name": "popen(...)"}, {"name": "proc_open(string cmd, ...)"}, {"name": "backticks `...`"}],
+      "patterns": ["\\bsystem\\s*\\(", "\\bexec\\s*\\(", "\\bshell_exec\\s*\\(", "\\bpassthru\\s*\\(", "\\bpopen\\s*\\(", "\\bproc_open\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/php_exec_shell.php", "what": "shell_exec runs via /bin/sh; $(...) command substitution expands", "date": "2026-11-20", "box": "php 8.3.6"}
+    },
+    "python": {
+      "sinks": [{"name": "os.system(...)"}, {"name": "subprocess.*(…, shell=True)"}, {"name": "os.popen(...)"}, {"name": "commands.* (py2)"}],
+      "patterns": ["os\\.system\\s*\\(", "os\\.popen\\s*\\(", "shell\\s*=\\s*True", "\\bcommands\\."],
+      "verified": {"how": "executed", "test": "tests/equiv/py_exec_shell.py", "what": "shell=True interprets && (two markers); os.system via /bin/sh", "date": "2026-11-20", "box": "python 3.12.3"}
+    },
+    "node": {
+      "sinks": [{"name": "child_process.exec/execSync"}, {"name": "spawn(..., {shell: true})"}],
+      "patterns": ["child_process", "\\.exec\\s*\\(", "execSync\\s*\\(", "spawn\\s*\\([^)]*shell\\s*:"],
+      "verified": {"how": "executed", "test": "tests/equiv/node_exec_shell.js", "what": "exec runs via /bin/sh -c; && expands", "date": "2026-11-20", "box": "node v24.21.0"}
+    },
+    "ruby": {
+      "sinks": [{"name": "system(...)"}, {"name": "%x{...} / %x(...)"}, {"name": "backticks `...`"}, {"name": "IO.popen"}],
+      "patterns": ["\\bsystem\\s*\\(", "IO\\.popen", "%x\\{", "%x\\(", "`[^`]+`"],
+      "verified": {"how": "executed", "test": "tests/equiv/ruby_exec_shell.rb", "what": "backticks via /bin/sh; && expands", "date": "2026-11-20", "box": "ruby 3.2.3"}
+    },
+    "dotnet": {
+      "sinks": [{"name": "Process.Start", "gates": ["legacy UseShellExecute=true only; false is the modern default"]}],
+      "patterns": ["Process\\.Start", "UseShellExecute\\s*=\\s*true"],
+      "verified": {"how": "documented", "source": ".NET docs: ProcessStartInfo.UseShellExecute", "needs_local_verification": true}
+    },
+    "java": {"sinks": [], "patterns": [], "verified": {"how": "documented", "source": "Runtime.exec(String) tokenizes without a shell — see sink.exec.noshell", "needs_local_verification": true}}
+  },
+  "hazards": ["shell presence is the whole game for metachar payloads — check the family before assuming ';' or '&&' works", "escapeshellarg/shlex.quote defeat metachars; move to argument injection (noshell family) if quoting is present", "php backticks are NOT in the grep pattern set: MySQL identifier quoting (`users`) makes backtick patterns false-positive at scale on SQL-heavy PHP (a backtick-to-backtick span containing $vars still matches). Find literal backtick sinks by eye or AST, not grep."],
+  "non_transfers": ["java/dotnet/go/rust default paths — no shell; a metachar payload there is a no-op"]
+}

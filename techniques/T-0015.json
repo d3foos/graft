@@ -1,0 +1,216 @@
+{
+  "id": "T-0015",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "Worker-persistent state outlives the request that owns it: producer \u2192 missed reset \u2192 release \u2192 early consumer",
+  "index_line": "T-0015 \u00b7 MEM_WRITE \u00b7 worker-global slot still points into a freed request heap; a consumer that runs before normal init acts on it \u00b7 php/python/node/ruby \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "php",
+      "python",
+      "node",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-416",
+      "CWE-1419",
+      "CWE-1325"
+    ],
+    "capec": [],
+    "effect": "MEM_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "A multi-request worker assumes teardown and re-initialisation are one atomic step: whatever the previous request published into worker-global state is assumed gone before the next request runs. The gap between 'request heap freed' and 'global state reset' is reachable, and nothing in the request lifecycle says so.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a request drives an operation that publishes request-owned state into a slot the worker keeps across requests (here: session/decoder/error state from multipart upload progress)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "an interruption abandons the operation before its matching reset runs",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 3,
+      "does": "the worker frees the request heap while the worker-global field still refers into it",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 4,
+      "does": "a LATER request, same worker, reaches an operation that runs before normal request initialisation (INI diagnostics before request startup",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 5,
+      "does": "that operation reads, frees or branches on the stale value and treats it as valid state",
+      "primitive": "READ"
+    },
+    {
+      "n": 6,
+      "does": "a groomed heap layout places attacker-chosen data where the stale pointer is dereferenced, turning the read into a controlled call",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the multipart/upload request that is simultaneously producer and consumer \u2014 no application code and no session_start() needed; an interruption after state is published plus one later request on the same worker is the whole requirement"
+    },
+    "lifetime.object": {
+      "value": "the alloc \u2192 abort \u2192 free \u2192 reuse triangle spanning a request boundary: the record's owner (the request) dies, the reference (the worker global) does not"
+    },
+    "size.length": {
+      "value": "memory_limit / body / timeout sizing is the cheapest deterministic interrupt, and OOM is the application-independent trigger \u2014 it produces the abort, it is not the bug"
+    },
+    "guard.none": {
+      "value": "no boundary guard exists; the fix resets wider state precisely because no configuration option covers every producer/consumer pair"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "a persistent (multi-request) worker serves the traffic, so a global can outlive its request",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "pm\\s*=\\s*(static|dynamic|ondemand)",
+            "mod_php",
+            "php-fpm",
+            "lsapi",
+            "litespeed",
+            "frankenphp",
+            "gunicorn",
+            "puma",
+            "worker_threads"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the early consumer exists in config: session.upload_progress on (default) or early INI diagnostics before request startup",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "session\\.upload_progress",
+            "php_value|php_admin_value|php_flag",
+            "fatal_error_backtraces"
+          ],
+          "paths": [
+            "php.ini",
+            "conf.d",
+            "Dockerfile",
+            "vhost",
+            "apache2",
+            "nginx"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "build is inside the affected range (PHP < 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12; sibling CVE-2026-109618 fixed in the same releases)",
+      "check": {
+        "kind": "shell",
+        "spec": "php -r 'echo PHP_VERSION;' # then compare against 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 \u2014 anything lower is in range"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the attacker can open two requests that land on the same worker (connection reuse, pinned session, or enough concurrency to hit a pool child twice)",
+      "check": {
+        "kind": "shell",
+        "spec": "profile the pool: static pm.max_children=1 pins one worker (deterministic); dynamic pins nothing (retry the producer/consumer pair N times); mod_php pre-fork behaves like static"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a request sequence, not a single request, produces the effect \u2014 the trigger request and the effect request are different",
+      "the effect appears only after a fatal error / OOM / late diagnostic on the producer request",
+      "worker-global state (error, session, decoder, extension state) is non-empty at the start of a request that never set it"
+    ],
+    "failure_like": [
+      "every request starts from provably clean state (instrument the slot before init and find it empty)",
+      "the worker exits after the failed startup (PHP-FPM terminates a child when php_request_startup() fails)",
+      "the interrupt lands after the matching reset already ran"
+    ],
+    "false_positive": [
+      "a crash that never crosses a request boundary \u2014 a single-request segfault is a DoS, not this record",
+      "in-process state reuse that is deliberately per-worker and re-initialised (caches, opcache) \u2014 check the slot is actually freed, not recycled",
+      "claiming RCE from the crash alone: the vendor is explicit that exploitability needs BOTH a producer and a consumer plus a controllable heap layout"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "the two halves are usually in different features \u2014 hunt producers and consumers as separate lists and join them last; do not look for one function that does both",
+      "session.upload_progress is on by default and needs no session_start(), which is why it is the demonstrated application-independent trigger",
+      "with mod_php the producer is .htaccess/php_value config applied before request startup"
+    ],
+    "non_transfers": [
+      "a one-shot process per request (CGI, per-request container) \u2014 no worker, no stale global, no bug",
+      "pure managed runtimes that hand each request a fresh isolate (some FaaS); verify the isolate is really fresh before assuming either way",
+      "a single-request memory-safety bug that never spans the boundary \u2014 that is T-0010, not this"
+    ],
+    "confidence": {
+      "php": 0.9,
+      "python": 0.55,
+      "node": 0.6,
+      "ruby": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0007",
+    "T-0010"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "PHP 8.2\u20138.5 (CVE-2026-109619 / CVE-2026-109618, php2shell)"
+  },
+  "provenance": [
+    {
+      "src": "sources/65a209b9a5e7bc34-php-ghsa-6wmf-4rv5-p3rp.txt",
+      "author": "PHP Group (php/php-src security advisory GHSA-6wmf-4rv5-p3rp)",
+      "sha256": "65a209b9a5e7bc34778c6d62cb334bf0b5c68ed4b1a7c75d9a4124595c253484",
+      "corroborates": "producer/consumer framing, the early-consumer list, the config-based mitigation limit"
+    },
+    {
+      "src": "https://php2shell.delftintellab.com/",
+      "author": "Delft Threat Intelligence Lab (TU Delft)",
+      "corroborates": "independent in-the-wild telemetry: 89,575 exploitation requests from 802 IPs since 2026-10-20"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-109619 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-416/1419/1325 classification, CVSS 3.1 AV:N/AC:H/PR:N/UI:N/C:H/I:H/A:H, KEV addition 2026-10-26, EPSS 1.000"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; due date 2026-10-29"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.86
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

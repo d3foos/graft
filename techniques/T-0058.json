@@ -1,0 +1,188 @@
+{
+  "id": "T-0058",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "An install-time hook runs with the developer's privileges before any review, anchored on a publish token",
+  "index_line": "T-0058 \u00b7 EXEC \u00b7 phished npm token publishes four versions whose postinstall drops and runs a payload \u00b7 shell/node \u00b7 corroborated",
+  "langs": {
+    "origin": "node",
+    "transferable": [
+      "node",
+      "python",
+      "ruby",
+      "php",
+      "shell"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-506",
+      "CWE-829"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Adding a dependency is treated as a supply decision reviewed once, at the version you read. But a package's install script executes on the developer's machine and in CI at `npm install`, with their user's rights and their environment's secrets \u2014 before any import, any test, any review. And the only thing standing between an attacker and publishing is a token that phishes like any other credential.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker obtains the maintainer's package-registry token by phishing (a fake login page, not a code exploit)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "they publish versions of a legitimately popular package that include a lifecycle hook script alongside unchanged library code",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "a developer or CI job installs or updates the package, and the package manager runs the hook as part of installation",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 4,
+      "does": "the hook drops and starts a payload on the host, with the installing user's privileges and environment",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 5,
+      "does": "the payload runs a command on the developer's machine or build runner",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.env": {
+      "value": "the dependency manifest plus its resolved versions \u2014 the input is a package coordinate, not a request"
+    },
+    "delegate.tool": {
+      "value": "the package manager's lifecycle hook (postinstall/prepare), which exists to run arbitrary code at install time"
+    },
+    "guard.signature": {
+      "value": "provenance and publish authentication: 2FA, attestations, lockfile integrity. The publish token is the anchor that failed"
+    },
+    "sink.exec.shell": {
+      "value": "the hook's interpreter, running in the developer's or runner's context"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "the package manager runs lifecycle scripts from dependencies by default",
+      "check": {
+        "kind": "shell",
+        "spec": "npm config get ignore-scripts; node -e \"console.log(require('./package.json').scripts)\""
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the project installs or updates the affected packages, directly or transitively",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "eslint-config-prettier|prettier",
+            "\"postinstall\"|\"prepare\"|\"install\""
+          ],
+          "paths": [
+            "package.json",
+            "package-lock.json",
+            "yarn.lock"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the host can run the payload (the known variant targets Windows",
+      "check": {
+        "kind": "shell",
+        "spec": "uname -a; node -p process.platform"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an unexpected child process or outbound connection during install, before any application code runs",
+      "a new binary or script appears in a cache, temp or package directory outside the project",
+      "the lockfile resolves to a version whose published tarball differs from the repository tag"
+    ],
+    "failure_like": [
+      "the environment disables lifecycle scripts, or pins integrity and refuses the new versions",
+      "the platform is one the payload does not target (the known variant was Windows-only)"
+    ],
+    "false_positive": [
+      "a legitimate package that always had a postinstall step \u2014 compare against the previous version's manifest",
+      "an install-time network call from a registry mirror, not from the package"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "the registry token is the trust anchor and it is phishable; publish-side 2FA and provenance attestations are the only real controls",
+      "install-time code runs before your dependency policy has a chance to look at the code \u2014 review the manifest, not just the source",
+      "this is the dependency-install sibling of T-0038 (a mutable CI tag): both are 'the reference moved and something ran'",
+      "CI is the higher-value target: a runner holds deploy credentials, and install happens on every build"
+    ],
+    "non_transfers": [
+      "environments that install with scripts disabled and run only vetted build steps",
+      "registries that enforce provenance attestations tied to a verified identity"
+    ],
+    "confidence": {
+      "node": 0.9,
+      "python": 0.75,
+      "ruby": 0.7,
+      "php": 0.7,
+      "shell": 0.8
+    }
+  },
+  "combines_with": [
+    "T-0038"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "eslint-config-prettier 8.10.1 / 9.1.1 / 10.1.6 / 10.1.7 (CVE-2025-54313)"
+  },
+  "provenance": [
+    {
+      "src": "sources/7dabfb0e12243158-endor-prettier.txt",
+      "author": "Endor Labs analysis of CVE-2025-54313",
+      "sha256": "7dabfb0e12243158582ccfd71df97861ec25d91a376f75092defeb775dbc6172",
+      "corroborates": "the phished npm token, four malicious versions, the install.js dropping and running a DLL, and the Windows-only targeting"
+    },
+    {
+      "src": "https://socket.dev/blog/npm-phishing-campaign-leads-to-prettier-tooling-packages-compromise",
+      "author": "Socket (independent supply-chain analysis)",
+      "corroborates": "independent timeline and the phishing campaign behind the token theft"
+    },
+    {
+      "src": "https://www.stepsecurity.io/blog/supply-chain-security-alert-eslint-config-prettier-package-shows-signs-of-compromise",
+      "author": "StepSecurity (independent runtime analysis)",
+      "corroborates": "independent detection of the install-time payload behaviour"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-54313 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-506 embedded malicious code; the four affected versions"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-01-22; EPSS 0.051"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

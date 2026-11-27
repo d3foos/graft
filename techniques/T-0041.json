@@ -1,0 +1,196 @@
+{
+  "id": "T-0041",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "The framework decompresses content types on your behalf, so the decoder is attack surface even where your code never mentions it",
+  "index_line": "T-0041 \u00b7 MEM_WRITE \u00b7 automatic content-encoding decode puts a native decoder in every request path \u00b7 c/any-runtime-with-zlib \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "node",
+      "python",
+      "ruby",
+      "go",
+      "rust"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-787",
+      "CWE-252"
+    ],
+    "effect": "MEM_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "Attack surface is assumed to be the code that parses *your* protocol. But the runtime decompresses content encodings and the HTTP client/decompress middleware inflates bodies automatically \u2014 so a native decoder written in C is in the path of every request and response, and its output buffer sizing depends on length fields inside the compressed stream, which are attacker data.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an attacker supplies a compressed body (or hosts a response) whose format-level length fields disagree with the actual data",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the runtime's HTTP layer or client library recognises the content-encoding and hands the bytes to the decoder without the application asking",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the decoder computes an output extent from metadata inside the stream and, on the malformed path, fails to enforce it",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "the copy writes past the end of the destination buffer",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "adjacent heap structures are corrupted into control flow the attacker can steer",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "a request or response body with a content-encoding header \u2014 the application never sees it; the transport does the parsing"
+    },
+    "sink.memory.copy": {
+      "value": "the decoder's copy/allocation loop, sized from stream metadata"
+    },
+    "size.length": {
+      "value": "the format's own length/count fields, which the encoder never has to be honest about"
+    },
+    "guard.none": {
+      "value": "the application has no decoder-level validation and cannot add any \u2014 the bug is below its API"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the runtime or an HTTP client auto-decompresses the encoding in question",
+      "check": {
+        "kind": "shell",
+        "spec": "node -e \"const z=require('zlib');console.log(typeof z.brotliDecompress)\"; python3 -c \"import brotli\" 2>/dev/null && echo brotli-present"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the decoder build predates the fixed release",
+      "check": {
+        "kind": "shell",
+        "spec": "node -p 'process.versions.brotli || process.versions'; dpkg -l | grep -i brotli"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the attacker controls a body that reaches the decoder (an upload, a proxied response, a server-side fetch)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "fetch\\(|http\\.request|axios|urllib|requests\\.get",
+            "content-encoding|accept-encoding"
+          ],
+          "paths": [
+            "src",
+            "lib",
+            "app"
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a crash or memory corruption from a body the application never parsed \u2014 the stack is inside the decompressor",
+      "the same payload is inert when the content-encoding header is removed, and reaches the decoder when it is present",
+      "the corrupted allocation appears in a heap dump next to decoder-internal structures"
+    ],
+    "failure_like": [
+      "the decoder detects the invalid stream and stops before writing (the fix: validate before extending the output)"
+    ],
+    "false_positive": [
+      "a decompression *error* page \u2014 malformed input rejected cleanly is the safe behaviour",
+      "a crash in application code that happens to run after decompression; the stack must be inside the decoder"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.memory.copy.json"
+    ],
+    "hazards": [
+      "inventory the decoders, not the code: image codecs (including WASM builds), compression, character sets, and archive formats are all in this class and all sit below the app's API",
+      "an SSE/ASGI/servlet middleware or an HTTP client's `Accept-Encoding` can put the decoder in the path even when the handler never mentions compression",
+      "the fix is input validation inside the decoder \u2014 no application-level filter can substitute for it",
+      "WASM builds (in-browser image decoders, `sharp`-style native modules) have the same bugs with a different exploitability profile"
+    ],
+    "non_transfers": [
+      "builds using a pure-managed decoder with bounds checks",
+      "deployments that strip content-encoding and refuse compressed bodies"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.85,
+      "node": 0.8,
+      "python": 0.7,
+      "ruby": 0.6,
+      "go": 0.7,
+      "rust": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0010"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Brotli decoder 1.0.3\u20131.2.0 as shipped in Node.js (CVE-2026-111497, 'node2shell'/'broccoli2shell')"
+  },
+  "provenance": [
+    {
+      "src": "sources/3ffca1ffafb772d8-brotli-aikido.txt",
+      "author": "Aikido Security (node2shell analysis)",
+      "sha256": "3ffca1ffafb772d83787960f1039f67e709443db73dea8b60c21e790a4d0fa05",
+      "corroborates": "the out-of-bounds write in the Brotli decoder, the automatic-decompression paths in Node (node:zlib, fetch responses), and the fixed releases"
+    },
+    {
+      "src": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+      "author": "Node.js project (security release notes)",
+      "corroborates": "'Brotli decoder out-of-bounds write permits remote code execution' and the fixed Node versions"
+    },
+    {
+      "src": "http://www.openwall.com/lists/oss-security/2026/10/23/25",
+      "author": "oss-security (Openwall mailing list)",
+      "corroborates": "public technical disclosure thread, independent of the vendor"
+    },
+    {
+      "src": "https://github.com/advisories/GHSA-9v8h-qqgm-4m35",
+      "author": "GitHub Advisory Database (independent record)",
+      "corroborates": "affected/fixed version matrix across ecosystems that ship the decoder"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-111497 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'buffer overflow in the Brotli decoder (c/dec/decode.c)', versions 1.0.3\u20131.2.0, all platforms"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-10-27; EPSS 0.824"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

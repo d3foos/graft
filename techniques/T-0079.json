@@ -1,0 +1,186 @@
+{
+ "id": "T-0079",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The decompressor reports the buffer it allocated rather than the bytes it produced, so the reply carries whatever the heap held",
+ "index_line": "T-0079 · MEM_READ · OP_COMPRESSED with an inflated uncompressedSize: allocation length used as produced length → heap bytes in the reply · cpp · corroborated",
+ "langs": {
+  "origin": "cpp",
+  "transferable": [
+   "cpp",
+   "c",
+   "go",
+   "rust",
+   "java"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-125",
+   "CWE-908",
+   "CWE-200"
+  ],
+  "capec": [],
+  "effect": "MEM_READ",
+  "stage": "impact"
+ },
+ "invariant_violated": "The wire-protocol decompressor assumed a message's declared uncompressed size and the number of bytes zlib actually produced were interchangeable; returning the allocated size made the untouched tail look like valid BSON, so the parser walked uninitialised heap and the server shipped it back.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated client sends an OP_COMPRESSED wire message whose uncompressedSize field claims more bytes than the compressed payload will produce"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the server allocates an output buffer sized from the attacker's claimed length"
+  },
+  {
+   "n": 3,
+   "primitive": "WRITE",
+   "does": "zlib inflates the real payload into the start of that buffer and leaves the remainder untouched"
+  },
+  {
+   "n": 4,
+   "primitive": "COMPARE",
+   "does": "the decompressor hands on the allocated buffer size as the produced length, so the mismatch is never detected"
+  },
+  {
+   "n": 5,
+   "primitive": "PARSE",
+   "does": "BSON parsing walks the uninitialised tail as if it were field data, reading until it meets a NUL"
+  },
+  {
+   "n": 6,
+   "primitive": "READ",
+   "does": "those heap bytes are serialised into the reply document and returned to the unauthenticated client"
+  }
+ ],
+ "slots": {
+  "source.protocol": {
+   "value": "the OP_COMPRESSED MongoDB wire message: a length field the client controls precedes any authentication"
+  },
+  "size.length": {
+   "value": "uncompressedSize (attacker-declared) versus the length zlib actually produced"
+  },
+  "sink.memory.copy": {
+   "value": "the decompression buffer allocation sized by the untrusted length; the untouched tail is later parsed as data"
+  },
+  "guard.none": {
+   "value": "no authentication is required to reach the decompressor, and no check compares produced length against the declaration"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the mongod/mongos listener is reachable from the network",
+   "check": {
+    "kind": "shell",
+    "spec": "timeout 5 bash -c 'exec 3<>/dev/tcp/HOST/27017; printf \"\\x41\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\xd4\\x07\\x00\\x00\\x00\\x00\\x00\\x00\\x69\\x73\\x4d\\x61\\x73\\x74\\x65\\x72\\x00\" >&3; head -c 120 <&3 | xxd | head -4'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the server enables the zlib network compressor",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "networkMessageCompressors|net\\.compression\\.compressors|zlib"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the running build predates the fixed release for its branch",
+   "check": {
+    "kind": "shell",
+    "spec": "mongod --version 2>/dev/null | head -3 || printf 'version check via buildInfo: '; curl -s http://HOST:27017/ | head -c 80"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a reply document contains bytes the client never sent — kernel log lines, other sessions' data, or binary that is not valid BSON the client constructed",
+   "the leaked region tracks the inflated uncompressedSize the client chose"
+  ],
+  "failure_like": [
+   "the server rejects the message with a length/compat error",
+   "zlib compression is disabled (snappy/zstd-only), so this path is not compiled in"
+  ],
+  "false_positive": [
+   "a normal isMaster reply is not a leak — require bytes that are demonstrably foreign to the request",
+   "random-looking but zero-filled padding suggests an allocation artefact, not disclosure; verify the content is live heap data"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every length-prefixed protocol with optional compression: the declared and produced lengths are two different numbers",
+   "the bug is pre-authentication because decompression happens before auth",
+   "the same accounting error becomes MEM_WRITE when the buffer is later written rather than parsed"
+  ],
+  "non_transfers": [
+   "implementations that size the buffer to the actual inflate output or memset the allocated region",
+   "servers with compression disabled"
+  ],
+  "confidence": {
+   "cpp": 0.85,
+   "c": 0.8,
+   "go": 0.6,
+   "rust": 0.6,
+   "java": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0010"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "MongoDB Server 8.2.0-8.2.2 / 8.0.0-8.0.16 / 7.0.0-7.0.28 / 6.0.x / 5.0.x / 4.4.x with zlib compression (CVE-2025-14847, 'MongoBleed')"
+ },
+ "provenance": [
+  {
+   "src": "sources/7bf5e0d3bc0d123e-mongo-jira-server115508.txt",
+   "author": "MongoDB Server Engineering (SERVER-115508)",
+   "sha256": "7bf5e0d3bc0d123e83f2e3399e36e2a34d611bb8d819d0207713a7984d82f82f",
+   "corroborates": "CVE-2025-14847: a client-side exploit of the server zlib implementation returns uninitialized heap memory without authenticating; workaround is disabling the zlib compressor; the linked fix commit is \"Make minimally sized buffers for uncompressed Messages\""
+  },
+  {
+   "src": "sources/339603d4013dea77-mongobleed-readme.txt",
+   "author": "Joe Desimone (mongobleed PoC)",
+   "sha256": "339603d4013dea776a33cdccb2dff6cb40a0138799a70ad7288db5886a3de15d",
+   "corroborates": "independent mechanism analysis: the decompressor returns the allocated buffer size instead of the actual decompressed length; an inflated uncompressedSize makes the server allocate a large buffer, zlib fills only the start, and BSON parsing reads field names from the uninitialised tail until NUL bytes"
+  },
+  {
+   "src": "MITRE/NVD CVE-2025-14847 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2025-14847 description and CVSS"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2025-12-29"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.85
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

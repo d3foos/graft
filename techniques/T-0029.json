@@ -1,0 +1,223 @@
+{
+  "id": "T-0029",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A hand-rolled session parser desyncs on an attacker-chosen key name, and a later unserialize assembles the object from two request fields",
+  "index_line": "T-0029 \u00b7 EXEC \u00b7 key name corrupts the session framing; the uploaded filename supplies the next bytes; a second unserialize fires the gadget \u00b7 php \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php",
+      "ruby",
+      "python",
+      "node"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-502",
+      "CWE-20",
+      "CWE-74"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "The session store is assumed to be integrity-protected because the attacker never gets to send a serialized object: the framework writes it, the server reads it. But the framework's own hand-rolled reader trusts the *shape* of what it parses, so a key name that desynchronises its pointer lets an attacker append entries \u2014 and a second location that unserializes a stored string turns those entries into an object stream.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an authenticated low-privilege user sends an upload request whose `from` parameter becomes the name of a key written into the session",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the session layer re-serializes the session with its own parser, which walks the string with a pointer rather than using the language's deserializer",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "a crafted key (a leading `!`, then closing quotes and delimiter bytes) makes the reader record 'this key has no value' and move on with its pointer misaligned",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the misalignment lets the following bytes \u2014 supplied by an uploaded file's name \u2014 be written into the session as a new entry",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the session is stored and later reloaded; a different code path unserializes one of those entries as a serialized blob",
+      "primitive": "DESERIALIZE"
+    },
+    {
+      "n": 6,
+      "does": "the object's magic method runs on destruction or wakeup, and the assembler's own API hands it the attacker string as a command",
+      "primitive": "CALLBACK"
+    },
+    {
+      "n": 7,
+      "does": "the configured command executes as the web user, from a request that needed only mailbox credentials",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the pair of ordinary request fields \u2014 a handler-naming parameter and an uploaded file's name \u2014 that together form the serialized payload; neither alone carries it"
+    },
+    "sink.deser.native": {
+      "value": "the second-order unserialize of a value the session now holds (preferences, identity, cached config) \u2014 the real sink, not the session load"
+    },
+    "encoding.object-stream": {
+      "value": "the object stream assembled in two halves: `O:NN:\"Class\"` in one field, the property bytes in the other"
+    },
+    "guard.escaping": {
+      "value": "the session parser's framing rules \u2014 the guard is the delimiter/pointer discipline, and it is defeated by a key that changes the reader's state"
+    },
+    "gadget.magic-method": {
+      "value": "a class whose destructor/wakeup treats one of its own properties as an executable command (GPG engine, mail transport, cache backend)"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "sessions are re-serialized by a hand-rolled parser rather than the platform's serializer, and a request parameter becomes a session key",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "session.*unserialize|rcube_session|session_decode|_SESSION\\[$[a-z_]+\\]\\s*=",
+            "foreach.*explode\\('\\|'"
+          ],
+          "paths": [
+            "program/lib",
+            "lib",
+            "src"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "an action writes a request-supplied name into the session and a second place unserializes a session-held string",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "unserialize\\s*\\(|\\\\$_GET\\[|get_input_value\\("
+          ],
+          "paths": [
+            "program/actions",
+            "program/lib"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "the attacker holds any mailbox account (post-auth, low privilege) \u2014 this is not pre-auth"
+    },
+    {
+      "kind": "runtime",
+      "expr": "a usable gadget class is autoloadable (the framework ships ones whose destructor runs a configured command)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "function __destruct|function __wakeup|proc_open|exec\\s*\\(|system\\s*\\("
+          ],
+          "paths": [
+            "program/lib",
+            "vendor"
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the session store shows an entry the request never legitimately set, adjacent to the key the parameter named",
+      "the command's side effect appears on the next request that reloads the session \u2014 the payload lands at load time, not at upload time",
+      "the object stream in the store contains a class name the application never instantiates for that key"
+    ],
+    "failure_like": [
+      "the session layer uses the platform serializer and/or validates the key against an allow-list before use",
+      "the second-order unserialize passes `allowed_classes => false`, so the stream becomes arrays only"
+    ],
+    "false_positive": [
+      "a session entry that looks odd because of a legitimate framework upgrade or a stale entry \u2014 compare against a control request that changes nothing",
+      "a deserialization error page proving the payload reached the parser but not that a gadget executed",
+      "claiming pre-auth: this needs a mailbox account; the finding starts at PR:L"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.deser.native.json"
+    ],
+    "hazards": [
+      "the interesting part is the *split* payload: check every place where two request fields are concatenated into one stored value",
+      "hand-rolled parsers of serialized formats are the recurring defect \u2014 a pointer-walking reader over attacker-influenced keys is a framing bug waiting to happen",
+      "gadget availability decides impact: enumerate destructors/wakeups in the framework and its bundled libraries before declaring RCE",
+      "related to but distinct from T-0019 (flat store, CRLF record injection): here the framing of a serialization format is desynced, not the record delimiter"
+    ],
+    "non_transfers": [
+      "frameworks that sign or HMAC the session blob",
+      "session keys restricted to an allow-list before any write",
+      "serializers that reject a key on the first malformed token and abort the whole load"
+    ],
+    "confidence": {
+      "php": 0.9,
+      "ruby": 0.6,
+      "python": 0.6,
+      "node": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0007",
+    "T-0019"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Roundcube < 1.5.10 / 1.6.x < 1.6.11 (CVE-2025-49113)"
+  },
+  "provenance": [
+    {
+      "src": "sources/622c784533f7e519-roundcube-fearsoff-extracted.txt",
+      "author": "FearsOff research (Kirill Firsov, CVE-2025-49113 finder)",
+      "sha256": "622c784533f7e519610aefcf26d4fb6c887bee038f4e4af546bd2bb670827de0",
+      "corroborates": "full chain: the hand-rolled session serializer, the `!` key desync, the uploaded filename as the second half, the second-order unserialize and the working gadget payload"
+    },
+    {
+      "src": "https://roundcube.net/news/2025/06/01/security-updates-1.6.11-and-1.5.10",
+      "author": "Roundcube (vendor advisory)",
+      "corroborates": "affected versions, the `_from` parameter in program/actions/settings/upload.php, and the fix releases"
+    },
+    {
+      "src": "https://www.vicarius.io/vsociety/posts/cve-2025-49113-roundcube-vulnerability-detection",
+      "author": "Vicarius (independent detection research)",
+      "corroborates": "independent analysis and detection guidance"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-49113 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-502, CVSS 3.1 9.9 with S:C (AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H)"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-02-20; EPSS 0.996"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

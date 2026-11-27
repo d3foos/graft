@@ -1,0 +1,182 @@
+{
+  "id": "T-0043",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A NUL byte splits one value into two: the C login check truncates, the scripting layer keeps the tail",
+  "index_line": "T-0043 \u00b7 EXEC \u00b7 embedded NUL authenticates as the short name but is persisted whole into a Lua session file \u00b7 c/lua \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "lua",
+      "python",
+      "perl",
+      "php"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-158",
+      "CWE-94",
+      "CWE-20"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A string crossing a C/scripting boundary is assumed to mean the same thing on both sides. It does not: the C path measures with a NUL-terminated view, the scripting layer carries an explicit length. A value with an embedded NUL is therefore *two different values* depending on who looks \u2014 and the half the C code never saw is the half the script persists.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker logs in with a username containing a NUL byte followed by script source",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the C authentication path sees the NUL-terminated prefix, so it checks \u2014 and accepts \u2014 the short, valid name",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the request handler hands the same bytes to the scripting layer, which carries an explicit length and keeps the tail",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the session record is serialised by the scripting layer, so the tail is written as statements rather than data",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the session file is loaded as a script on the next request and the injected statements execute",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 6,
+      "does": "the injected code runs a command as the service account (root or SYSTEM in the default install)",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the login form field \u2014 an embedded NUL is the whole payload; filters that treat the value as text never see past it"
+    },
+    "sink.eval": {
+      "value": "the scripting engine loading the session record back as source (Lua `loadfile`, PHP `include` of a cache, Python `exec` of a pickle-adjacent cache)"
+    },
+    "encoding.string": {
+      "value": "the NUL itself; the split is between the C string view and the length-carrying view"
+    },
+    "guard.escaping": {
+      "value": "there is no escaping step between the caller's string and the persisted record \u2014 the 'guard' is the implicit assumption that both layers agree on length"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the service embeds a scripting engine and persists per-user state as code it later loads",
+      "check": {
+        "kind": "shell",
+        "spec": "find / -name '*.lua' -o -name 'sessions' -type d 2>/dev/null | head; ldd $(command -v the-service) 2>/dev/null | grep -i lua"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "a login field accepts a NUL byte without rejecting the request",
+      "check": {
+        "kind": "shell",
+        "spec": "printf 'username=test\\0x&password=' | curl -s -o /dev/null -w '%{http_code}\\n' --data-binary @- https://HOST/login"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "build predates the fixed release",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "read the service version banner or the binary's version string and compare with the vendor's fixed release"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a username with an embedded NUL authenticates as the prefix, and the session file on disk contains the tail as statements",
+      "the injected code runs on the *next* request, when the session is reloaded",
+      "the effect is pre-authentication even though it looks like a post-auth session write"
+    ],
+    "failure_like": [
+      "the field is length-checked or the scripting layer re-validates the persisted record before loading it",
+      "session state is stored as data (JSON/DB rows) rather than executable source"
+    ],
+    "false_positive": [
+      "a login that fails with the NUL payload \u2014 the truncation check is the first half; without the persist-and-load half there is no bug",
+      "a session file containing the NUL because it was written as escaped data \u2014 check whether the file is loaded as code"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.eval.json"
+    ],
+    "hazards": [
+      "any C\u2194script boundary is a candidate: Lua/PHP/Python embedded in a C daemon, with session or cache files written as source",
+      "the NUL is usually rejected by the web framework but not by the socket read \u2014 test the raw request, not a form submission",
+      "the two halves must both exist: truncation alone is a filter bypass; persistence-as-code alone is a design smell. Record only when they compose",
+      "related to T-0019 (record injection into a flat store) but the mechanism is a length-view mismatch inside one value, not a delimiter"
+    ],
+    "non_transfers": [
+      "languages whose strings carry explicit lengths on both sides of the boundary (no truncation)",
+      "session stores that are data, not source"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "lua": 0.85,
+      "python": 0.6,
+      "perl": 0.6,
+      "php": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0019",
+    "T-0021"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Wing FTP Server < 7.4.4, web interface (CVE-2025-47812)"
+  },
+  "provenance": [
+    {
+      "src": "sources/8c94e027560c9d7a-wingftp-rcesecurity.txt",
+      "author": "RCE Security (Julien Ahrens) analysis of CVE-2025-47812",
+      "sha256": "8c94e027560c9d7a495530eb3678b01ef0c327da40acdb7ed5ac2ff0ddd85703",
+      "corroborates": "the strlen-vs-NUL behaviour in the login handler, the Lua session file as the persistence point, and the pre-auth RCE chain"
+    },
+    {
+      "src": "https://www.huntress.com/blog/wing-ftp-server-remote-code-execution-cve-2025-47812-exploited-in-wild",
+      "author": "Huntress (independent, in-the-wild)",
+      "corroborates": "independent exploitation reporting and detection guidance"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-47812 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'mishandle \\0 bytes \u2026 injection of arbitrary Lua code into user session files'; CWE-158; CVSS 3.1 9.8"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-07-14; EPSS 0.939"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

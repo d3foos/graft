@@ -1,0 +1,209 @@
+{
+  "id": "T-0017",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "'Temporary' is a scheduling assumption, not an access-control property: staged code lives at a guessable path under the web root during a maintenance window",
+  "index_line": "T-0017 \u00b7 CODE_EXEC \u00b7 deterministic staging path inside the docroot, reachable between extract and cleanup \u00b7 php/node/ruby/python \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php",
+      "node",
+      "ruby",
+      "python"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-367",
+      "CWE-1188"
+    ],
+    "capec": [],
+    "effect": "CODE_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A maintenance routine assumes the window between 'write the new code' and 'move it into place and delete it' is safe because it is short and because the directory is an implementation detail. The directory is inside the document root, its name is deterministic, and the web server executes anything under it. Duration is not a control.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a routine that must run unattended (full-package upgrade, deploy, installer, cache rebuild) extracts or writes the next version of the application into a staging directory",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 2,
+      "does": "the staging path is derived deterministically from the package or product name, so it is guessable without any information from the victim",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the directory is created beneath the document root, and the web server's execute rule is inherited \u2014 the directory carries no access rule of its own",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 4,
+      "does": "the attacker races: request the deterministic path while the window is open. Nothing in the request is authenticated or unusual",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 5,
+      "does": "the request is served and executed in the web-server context, before the installer copies files into place and removes the staging area",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 6,
+      "does": "the fix removes the predictability (randomised staging name), not the window \u2014 confirming that guessability was the control being relied on",
+      "primitive": "COMPARE"
+    }
+  ],
+  "slots": {
+    "sync.window": {
+      "value": "the extract\u2192install\u2192cleanup gap; it is a wall-clock window the attacker must hit, so the record is a race, but the guessability is what makes the race winnable at all"
+    },
+    "source.http.request": {
+      "value": "a plain unauthenticated GET to the staging path \u2014 no trigger, no token, no state change; the attacker is a spectator who can act"
+    },
+    "sink.file.write": {
+      "value": "the staged tree itself: the routine writes attacker-useful code (or core PHP the attacker can drive) into a web-executable location"
+    },
+    "client.burst": {
+      "value": "request cadence decides whether the race is winnable \u2014 poll at the maintenance cadence, or pin the window from an observable side-effect (a version banner changing, a 5xx burst)"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the web server executes PHP (or the target language) anywhere under the document root, including directories the application created",
+      "check": {
+        "kind": "shell",
+        "spec": "find . -maxdepth 3 -type d \\( -name upgrade -o -name staging -o -name tmp -o -name '.deploy*' \\) -path '*/public/*' -o -maxdepth 3 -type d -name upgrade 2>/dev/null"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the staging path is deterministic \u2014 derive it from the product and package name and confirm it is the same on every host of that version",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "wp-content/upgrade",
+            "upgrade/wordpress",
+            "staging",
+            "\\.staging",
+            "deploy_tmp"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "an upgrade/deploy can be triggered or is scheduled, and the attacker can observe when it starts",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "class-core-upgrader",
+            "wp_version_check|cron",
+            "auto_update|autoupdate",
+            "deploy|release"
+          ],
+          "paths": [
+            "wp-admin/includes",
+            "bin",
+            "scripts",
+            "ci"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "build is in the affected range (WordPress 4.7.0\u20137.1.3; fixed 7.1.4 randomises the staging path)",
+      "check": {
+        "kind": "shell",
+        "spec": "grep -m1 \"wp_version =\" wp-includes/version.php"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the same unauthenticated request returns executable output on the vulnerable build and nothing (randomised path) on the fixed build",
+      "the response is executed code, not source disclosure: a PHP source file served as text means the execute rule did not apply and the window was not exploitable that way",
+      "the request lands inside the -extract/+cleanup interval, evidenced by a version-banner change or a 5xx burst at the same moment"
+    ],
+    "failure_like": [
+      "the staging path is randomised or carries a nonce \u2014 then the request 404s regardless of timing",
+      "the staging directory sits outside the document root, or a deny-all rule covers it"
+    ],
+    "false_positive": [
+      "concluding compromise from a 200 alone: a directory listing or a 404 page also returns 200 in many stacks \u2014 require executed output",
+      "treating a version banner as proof of the race: banner changes confirm the upgrade happened, not that code was staged at a guessable path",
+      "retro-fitting an exploitation claim to a log line without the timing correlation \u2014 this is a race, so absence of the correlation is the default"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "the window is short and the race real: plan for many attempts and for the maintenance cadence, not a single shot",
+      "the write side is the vendor's own code, so there is nothing to upload",
+      "the same shape appears in deploy tooling (.git, .svn, release-* directories inside the docroot) where the window is permanent, which is why the class is worth carrying"
+    ],
+    "non_transfers": [
+      "staging performed outside the document root (a sibling directory, /tmp, a container layer) \u2014 nothing to reach over HTTP",
+      "stacks whose per-directory execute rule is opt-in rather than inherited \u2014 a staged .php is inert there",
+      "maintenance modes that also block the staging prefix (a global deny rule during upgrade) \u2014 the window closes for the attacker too"
+    ],
+    "confidence": {
+      "php": 0.8,
+      "node": 0.55,
+      "ruby": 0.55,
+      "python": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0009"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "WordPress Core 4.7.0\u20137.1.3 full-package upgrader (CVE-2026-119977), fixed 7.1.4"
+  },
+  "provenance": [
+    {
+      "src": "sources/6a9f36cc9753d217-safe-security-cve-2026-119977.txt",
+      "author": "Safe Security threat research",
+      "corroborates": "extract\u2192install\u2192cleanup window, deterministic path under the docroot, the patched-vs-unpatched differential, and the explicit note that CWE-367 is inferred not vendor-stated",
+      "sha256": "6a9f36cc9753d2172ca291e70e28014e74c47de711197c960d9120628442c85d"
+    },
+    {
+      "src": "https://wordpress.org/news/2026/10/wordpress-7-1-4/",
+      "author": "WordPress Security Team (7.1.4 release notes, Aaron Jorbin)",
+      "corroborates": "vendor confirms 'a weakness in the WordPress upgrade process which can lead to remote code execution during the upgrade window', reported by Umut Bayram"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-119977 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'predictable, web-accessible staging paths used during full-package core upgrades'"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-11-03, due 2026-11-06"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.8
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

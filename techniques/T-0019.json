@@ -1,0 +1,227 @@
+{
+  "id": "T-0019",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "CRLF reaches a flat key=value session file on a branch that skipped the encoder, and a cache/promote path turns the injected lines into real records",
+  "index_line": "T-0019 \u00b7 AUTH_DECISION \u00b7 separator injection into a key=value store, hidden by a second representation until promoted \u00b7 perl/php/ruby/python \u00b7 corroborated",
+  "langs": {
+    "origin": "perl",
+    "transferable": [
+      "perl",
+      "php",
+      "ruby",
+      "python",
+      "node"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-306",
+      "CWE-93",
+      "CWE-472"
+    ],
+    "capec": [
+      "CAPEC-33"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A flat `key=value` session file is treated as a structured store, so a value is assumed to stay a value. That holds only if every write path escapes the separator \u2014 and the write path that matters is the one that skips the encoder because an optional field is absent. A separate serialised cache then hides the injection from the reader that matters, until a maintenance path re-serialises the raw file and promotes the injected lines to top-level keys.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker obtains a session *name* by failing a login \u2014 the server mints a pre-auth session and writes it to disk",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the presented credential travels in an HTTP auth header and is written back into the session record",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the encoder that would encode the field is conditional on an optional component of the session cookie",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "newline/separator bytes inside the value are written verbatim, so the following bytes land as additional top-level records with attacker-chosen key names",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the primary reader prefers a serialised cache in which the whole payload sits inside one value \u2014 the injection is invisible there",
+      "primitive": "READ"
+    },
+    {
+      "n": 6,
+      "does": "a pre-auth reachable maintenance path reads the raw file (cache disabled), re-serialises it, and writes both representations",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 7,
+      "does": "the loader now answers 'is this session an administrator' from attacker-chosen records, and the session is trusted",
+      "primitive": "AUTHZ_CHECK"
+    }
+  ],
+  "slots": {
+    "source.http.header": {
+      "value": "the Authorization: Basic credential (base64) \u2014 the value whose field is written back into the store; this is why the injection is pre-auth"
+    },
+    "sink.file.write": {
+      "value": "the session file itself: a flat key=value (or key|serialized) store whose records are line- or separator-delimited"
+    },
+    "encoding.string": {
+      "value": "CRLF / separator bytes carried inside the value field, plus a first byte of junk so the legitimate key still parses"
+    },
+    "guard.escaping": {
+      "value": "the per-field sanitiser and the conditional encoder \u2014 the guard exists, is applied to some fields and some write paths, and skips this one"
+    },
+    "sync.window": {
+      "value": "two representations must disagree, then be reconciled by a maintenance path; the attacker needs the promote step to happen before the check"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "sessions are persisted in a flat delimiter-separated file per session (not a signed opaque cookie, not a database row)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "sessions/raw",
+            "sessions/cache",
+            "session_save_path",
+            "session\\.save_handler\\s*=\\s*files",
+            "flushConfig\\(|parse_from_filehandle"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "a value the attacker supplies is written back into the session record on an error path (failed login, denial, retry counter)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "saveSession|save_session|session_write_close|flushConfig\\(",
+            "badpass|token_denied|failed_login|needs_auth"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the sanitiser is per-field and a write path exists that does not call it (check the callers, not the definition)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "filter_sessiondata|filter_session_data|strip_crlf|tr\\{.*\\\\r",
+            "Authorization|authorization"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "the target exposes a pre-auth reachable path that reads the raw store with the cache disabled and re-serialises it (that path is what promotes the injection)"
+    }
+  ],
+  "observables": {
+    "success": [
+      "the on-disk session file shows the injected pairs as siblings of the legitimate keys (`cat -A` shows the line breaks)",
+      "the serialised cache initially does NOT show them at top level \u2014 the two representations disagreeing is the signature",
+      "after the promote path runs, the cache and the loader both report the attacker-chosen key, and the authorisation decision flips"
+    ],
+    "failure_like": [
+      "the value is encoded (hex/base64) on every write path \u2014 the separator never reaches the file",
+      "the store's parser rejects unknown keys, or the loader re-validates the record set against a schema",
+      "the session name is not attacker-obtainable, or the optional cookie component cannot be omitted without a 400"
+    ],
+    "false_positive": [
+      "a session file that contains newlines because it was hand-edited or corrupted \u2014 the test is whether an *attacker-supplied* value produced them",
+      "authorisation that appears to flip because of a client-side flag, a stale cookie, or admin UI caching",
+      "a 30x redirect after the injection proves the credential was accepted, not that the injected records were read"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "there are two representations and they disagree on purpose \u2014 auditing only the file, or only the cache, gives the wrong answer in both directions",
+      "the guard is not missing, it is applied to the wrong set: audit the *callers* of the sanitiser, and the branches that skip optional encoding",
+      "path resolution that strips the optional cookie component means omitting the component does not change which file is addressed"
+    ],
+    "non_transfers": [
+      "opaque, signed session tokens (JWT, Rails encrypted cookies) \u2014 there is no server-side record to inject into",
+      "stores that serialise as JSON/msgpack with a real encoder on every path",
+      "a loader that reads one representation only \u2014 then the injection either works immediately or never, and the 'hidden then promoted' step does not exist"
+    ],
+    "confidence": {
+      "perl": 0.9,
+      "php": 0.65,
+      "ruby": 0.6,
+      "python": 0.6,
+      "node": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0007",
+    "T-0009"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "cPanel & WHM 11.110.0.96 (CVE-2026-41940), fixed 11.110.0.97"
+  },
+  "provenance": [
+    {
+      "src": "sources/7f37585db6c47ef6-watchtowr-cpanel-cve-2026-41940.txt",
+      "author": "watchTowr Labs (Sina Kheirkhah)",
+      "sha256": "7f37585db6c47ef6f26bd1736673a45ccefca4576d630531fb94200d2c5c3435",
+      "corroborates": "patch diff, the missing caller-side filter, the conditional encoder and the no-ob cookie, the raw-vs-JSON-cache divergence, the do_token_denied promote path, working PoC"
+    },
+    {
+      "src": "https://support.cpanel.net/hc/en-us/articles/40073787579671-cPanel-WHM-Security-Update-04-28-2026",
+      "author": "cPanel (vendor advisory)",
+      "corroborates": "'affects all currently supported versions'; 'session loading and saving'; fixed build numbers per branch"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-41940 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-306 authentication bypass in the login flow, CVSS 3.1 AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.bleepingcomputer.com/news/security/critrical-cpanel-flaw-mass-exploited-in-sorry-ransomware-attacks/",
+      "author": "BleepingComputer (press)",
+      "corroborates": "mass exploitation and ransomware campaign use; independent of the vendor"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited, knownRansomwareCampaignUse=Known, KEV added 2026-04-30"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

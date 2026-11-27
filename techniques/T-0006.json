@@ -1,0 +1,48 @@
+{
+  "id": "T-0006", "schema_version": 4, "record_version": 1,
+  "title": "Path traversal on the WRITE side: join/resolve semantics let input escape the base dir",
+  "index_line": "T-0006 · FILE_WRITE · write flavor first (RCE-adjacent) · join-reset semantics per language · corroborated",
+  "langs": { "origin": "node", "transferable": ["python", "php", "java", "dotnet", "ruby", "go", "rust"] },
+  "class": { "cwe": ["CWE-22"], "capec": [], "effect": "FILE_WRITE", "stage": "impact" },
+  "invariant_violated": "The app believes a joined path stays under its base directory; join/resolve semantics let an absolute or dot-dot component escape it.",
+  "mechanism": [
+    { "n": 1, "does": "attacker controls a path-ish component (filename, entry name, storage key, script name)", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "component joined/concatenated onto a base directory", "primitive": "CONCAT" },
+    { "n": 3, "does": "guard defeated: non-recursive replace('../'), basename-only checks, decode-after-check — or resets make the guard moot (absolute input replaces the base)", "primitive": "BYPASS", "bypasses": "guard.resolve-check" },
+    { "n": 4, "does": "file written (or read) outside the base — write flavor: overwrite startup scripts, .bashrc, a required module, authorized_keys, cron", "primitive": "WRITE" }
+  ],
+  "slots": {
+    "source.http.request": { "value": "path-ish input: name, key, entry.name, template/scaffold names" },
+    "fs.path.join": { "value": "the join primitive — reset semantics differ per language and decide the payload", "equivalents": "vocab/equivalents/fs.path.join.json" },
+    "sink.file.write": { "value": "writeFile/createWriteStream/extract/download-to-path/mkdir — prioritize write over read" },
+    "guard.resolve-check": { "value": "the correct guard is resolve-then-prefix-check on the DECODED value; look for it done on the raw value, before decoding, or not at all" },
+    "encoding.path": { "value": "../../../ · %2e%2e%2f · %252e (double) · overlong UTF-8 · ..\\ · absolute '/etc/cron.d/x' on reset-primitive languages" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "filesystem writes keyed on input", "check": { "kind": "grep", "spec": { "patterns": ["writeFile|createWriteStream|File\\.Write|open\\([^)]*['\"]w|extract|unzip|adm-zip|decompress"], "paths": ["src", "app", "lib", "routes"] } } },
+    { "kind": "dependency", "expr": "join/resolve primitive present", "check": { "kind": "grep", "spec": { "patterns": ["path\\.(join|resolve)|os\\.path\\.join|Path\\.Combine|Paths\\.get|filepath\\.Join|File\\.join|\\.resolve\\("], "paths": ["src", "app", "lib"] } } },
+    { "kind": "reachability", "expr": "request input reaches the join", "check": { "kind": "grep", "spec": { "patterns": ["req\\.(query|body|params)|entry\\.name|fileName|file\\.name"], "paths": ["src", "app", "lib", "routes"] } } },
+    { "kind": "auth", "expr": "varies — upload/download features usually authenticated user" }
+  ],
+  "observables": {
+    "success": ["write lands outside the base dir (sandbox PoC: marker file in a known out-of-tree location)", "read returns out-of-tree content (/etc/passwd)", "archive member resolves outside the extraction dir (zip-slip/symlink)"],
+    "failure_like": ["resolve-then-prefix check present and applied to the decoded value — path stays under base", "basename() strips traversal before the join"],
+    "false_positive": ["input is a server-side constant", "join primitive does not reset AND the resolved path is re-checked — correctly guarded, not a finding"]
+  },
+  "transfer": {
+    "same_effect": ["vocab/equivalents/fs.path.join.json"],
+    "hazards": ["reset semantics per language are load-bearing: python/dotnet/java-resolve/rust REPLACE on absolute — no dotdot needed there; node join does NOT (its reset primitive is resolve)", "Windows adds ..\\ and drive-absolute forms — test both separators"],
+    "non_transfers": ["object stores keyed without filesystem semantics", "pure in-memory path handling"],
+    "confidence": { "node": 0.85, "python": 0.85, "php": 0.8, "java": 0.75, "dotnet": 0.75, "ruby": 0.8, "go": 0.75, "rust": 0.7 }
+  },
+  "combines_with": ["T-0005", "T-0007"],
+  "probes": [ { "kind": "grep", "path": "probes/T-0006/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "skill:path-traversal", "author": "0security playbook corpus", "corroborates": "method detail + verified wins (cloudflare/wrangler init --from-dash, trustwallet WASM keystore)" },
+    { "src": "MITRE CWE-22", "author": "MITRE", "corroborates": "mechanism class" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.85 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "low" },
+  "ttl_days": 365
+}

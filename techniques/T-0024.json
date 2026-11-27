@@ -1,0 +1,216 @@
+{
+  "id": "T-0024",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A non-HTTP protocol's field becomes an identifier, and the monitoring daemon that watches that identifier re-parses it as a shell command",
+  "index_line": "T-0024 \u00b7 EXEC \u00b7 SMTP-supplied name reaches a watch/alarm config that is shell-interpreted \u00b7 perl/any monitoring \u00b7 corroborated",
+  "langs": {
+    "origin": "perl",
+    "transferable": [
+      "perl",
+      "python",
+      "ruby",
+      "php"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-78",
+      "CWE-74"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "The mail path validates what it *delivers* and assumes the identifier it records is inert. But the identifier is handed to a monitoring daemon whose configuration language is a shell, so a name that is legal in one protocol is syntax in the other. The monitoring plane is treated as trusted because it is 'just alerting'.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated request arrives over a non-HTTP protocol (SMTP envelope/recipient, or any field the primary service accepts before auth)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the service accepts the value and uses it as an *identifier* \u2014 a queue/mailbox/service name, logged and recorded",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the identifier is handed to a monitoring/alerting component (watch daemon, trap notifier, status hook) that monitors items by name",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 4,
+      "does": "the monitoring component builds its watch entry by string interpolation into a configuration line that is interpreted by a shell when the state changes",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 5,
+      "does": "a state transition fires the watch, so the shell evaluates the whole line \u2014 including the identifier",
+      "primitive": "EXEC"
+    },
+    {
+      "n": 6,
+      "does": "the command runs as the service account, from a request that never authenticated",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "a non-HTTP protocol field \u2014 SMTP envelope/recipient, a queue name, a job label. The primary service's validation is written for that protocol, not for the shell"
+    },
+    "sink.exec.shell": {
+      "value": "the monitoring daemon's command execution (watch/alarm `execute`/`watchfor`, trap handler, status hook)"
+    },
+    "guard.escaping": {
+      "value": "protocol-level validation sits in front of the identifier and passes it; the shell layer has no escaping at all"
+    },
+    "encoding.shell": {
+      "value": "metacharacters that are legal in the identifier but syntactic to a shell \u2014 plus the trigger that must fire for the watch line to be evaluated"
+    },
+    "source.file.name": {
+      "value": "the alternative shape: the identifier is a filename/dirname the attacker chooses, which the monitor reports on"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a monitoring/watch component consumes service identifiers and builds shell-interpreted config from them",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "watchfor|execute\\s*=|swatch|swatchdog|monit|zabbix|snmp.*notify|snmp_notify|trap"
+          ],
+          "paths": [
+            "etc",
+            "opt",
+            "conf",
+            "scripts"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the primary service is unauthenticated at the point the identifier is created (SMTP before auth, a public form, a queue producer)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "smtpd_recipient_restrictions|mynetworks|postfix|amavisd|226 |250 "
+          ],
+          "paths": [
+            "etc",
+            "opt"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the identifier reaches the monitor unchanged (no allow-list, no quoting) and a state transition will fire the watch",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "printf.*%s.*>>|echo .*>>.*conf|>> *[\\\"']?[^\\\"']*(watch|mon|conf)"
+          ],
+          "paths": [
+            "scripts",
+            "bin",
+            "opt"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the monitor actually runs and its configuration is regenerated from service state (the optional package is installed and notification is enabled)",
+      "check": {
+        "kind": "shell",
+        "spec": "ps -eo cmd | grep -E 'swatch|monit|zabbix' | grep -v grep; grep -ri 'snmp_notify' /opt/zimbra/conf 2>/dev/null"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the daemon's own log carries the injected identifier inside the line it reports as a status change",
+      "a marker file or command output appears with the service account's uid",
+      "the effect requires a state transition, so the second request (the one that changes state) is the one that fires, not the first"
+    ],
+    "failure_like": [
+      "identifiers are quoted or allow-listed before reaching the monitor",
+      "the monitoring component is not installed / notifications disabled \u2014 the code path is absent, not merely unreachable",
+      "the watch line is evaluated by an exec that does not invoke a shell"
+    ],
+    "false_positive": [
+      "the payload echoed back in a log line proves the identifier was *stored*, not that it was *evaluated* \u2014 require the command's side effect",
+      "a metacharacter in a name that the mail layer rejects at SMTP time (5xx) never reaches the monitor"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "the primary protocol matters: validation written for HTTP or SMTP is almost never sufficient for a shell, and identifiers are the usual gap",
+      "two requests are needed (create the identifier, then change state to fire the watch) \u2014 a single-shot probe will look negative on a vulnerable host",
+      "the trigger may be a scheduled sweep rather than an event \u2014 plan for a wait, not a race"
+    ],
+    "non_transfers": [
+      "monitoring stacks that pass identifiers as argv (no shell) \u2014 argument injection may still apply (T-0005), but metacharacters do not",
+      "identifiers restricted to a fixed character class by the primary service before they are recorded",
+      "services where the monitor reads a machine interface (netlink, JSON API) rather than generating config text"
+    ],
+    "confidence": {
+      "perl": 0.8,
+      "python": 0.65,
+      "ruby": 0.6,
+      "php": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0005",
+    "T-0013"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Zimbra Collaboration Suite < 10.1.20 with zimbra-snmp + SNMP notifications (CVE-2026-73570)"
+  },
+  "provenance": [
+    {
+      "src": "sources/15bed69dd1c334e3-certpl-zimbra-2026-145.txt",
+      "author": "CERT Polska advisory 145/2026 (NASK)",
+      "sha256": "15bed69dd1c334e369df2268533b15c2c103cf912adc73104bfe38aa048ee7d2",
+      "corroborates": "actively exploited; unauthenticated; runs as the zimbra user; requires snmp_notify + swatchdog"
+    },
+    {
+      "src": "https://blog.zimbra.com/2026/07/patch-release-update-zimbra-10-1-20/",
+      "author": "Zimbra (10.1.20 patch release notes, vendor)",
+      "corroborates": "'command injection vulnerability in the SNMP monitoring component when SNMP notifications are enabled', fixed in 10.1.20"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-73570 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'improper sanitization of untrusted input during SNMP notification processing \u2026 crafted SMTP requests'"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-08-21, due 2026-08-24"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.8
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

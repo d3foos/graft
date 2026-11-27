@@ -1,0 +1,182 @@
+{
+  "id": "T-0071",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "Trust assigned by connection origin: an unauthenticated fetch aimed at the server itself becomes loopback, and the server signs its own token to the attacker",
+  "index_line": "T-0071 \u00b7 AUTH_DECISION \u00b7 junk-token SSRF to 127.0.0.1 unguards the loopback-only API; a forged plugin call fetches a 127.0.0.1-prefixed host and the auto-attached owner token leaks \u00b7 cpp \u00b7 corroborated",
+  "langs": {
+    "origin": "cpp",
+    "transferable": [
+      "cpp",
+      "c",
+      "go",
+      "java",
+      "python"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-918",
+      "CWE-862"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "Requests from loopback are the server talking to itself, so they were trusted without a token. But anyone who can point one of the server's own outbound requests at 127.0.0.1 makes the server talk to itself \u2014 and the framework attaches the owner's admin token to any outbound URL that merely starts with the string http://127.0.0.1.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an internet attacker sends a request to the timeline endpoint with any junk token and a full URL in the protocol parameter",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the server POSTs to the attacker-chosen destination \u2014 aiming it at its own 127.0.0.1 makes the request originate from loopback",
+      "primitive": "CONNECT"
+    },
+    {
+      "n": 3,
+      "does": "the loopback-only plugin-management API accepts the request because it came from the server itself",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 4,
+      "does": "the searchOne identifier value is not neutralized: attacker parameters forge a call to another plugin function with attacker-supplied arguments",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 5,
+      "does": "the forged fetch targets a hostname beginning 127.0.0.1. (attacker wildcard DNS); the server sees the prefix, auto-attaches the owner's admin token, and DNS resolves the name to the attacker \u2014 the token is exfiltrated",
+      "primitive": "CONNECT"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the timeline/searchOne request parameters \u2014 junk tokens accepted, full URLs and identifiers passed through"
+    },
+    "guard.none": {
+      "value": "the origin classifier is not forged \u2014 it is legitimately satisfied; nothing asks who directed the server to talk to itself"
+    },
+    "sink.http.request": {
+      "value": "the two server-side fetches: to itself (origin reclassification) and to the 127.0.0.1-prefixed host (token exfil)"
+    },
+    "encoding.url": {
+      "value": "payload shape: full URL in the protocol parameter; identifier injection in searchOne; 127.0.0.1.<attacker-domain> for a prefix-respecting, attacker-resolving hostname"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the media server port is reachable from the attacker's position (frequently internet-exposed for remote streaming)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST:32400/identity"
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "the timeline endpoint accepts any token value and a full URL (pre-1.43.3.10861)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -H 'X-Plex-Token: junk' 'http://HOST:32400/player/timeline'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "trust is decided by connection origin, and token auto-attachment is keyed on a 127.0.0.1 string prefix rather than the resolved address",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "127\\.0\\.0\\.1.*[Tt]oken|isLocal|loopback|X-Plex-Token"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the server POSTs to an attacker-chosen URL with no valid token (out-of-band callback)",
+      "a loopback-origin request reaches the loopback-only plugin API and invokes a plugin function with attacker parameters",
+      "an outbound fetch to a 127.0.0.1-prefixed DNS name carries the owner's admin token to the attacker \u2014 full server takeover material"
+    ],
+    "failure_like": [
+      "1.43.3.10861 and later reject external URLs / neutralize the identifier / attach tokens only after resolution",
+      "the port is not exposed beyond the LAN"
+    ],
+    "false_positive": [
+      "plain SSRF to an external host is T-0003's cousin but not this record \u2014 the violated invariant is origin-based trust plus prefix-keyed token attachment",
+      "a callback to the attacker proves only the fetch leg; the loopback reclassification and the token exfil are separate observables"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.http.request.json"
+    ],
+    "hazards": [
+      "every service that classifies trust by connection origin (loopback, RFC1918, cluster-internal): anything that lets an outsider aim one of the service's own requests at it reclassifies that request as trusted",
+      "prefix-matching an address string instead of the resolved IP is the exfil half \u2014 wildcard DNS services resolve the 'safe' prefix to the attacker",
+      "pairs with T-0037 for the landing: the owner token unlocks the preference-write that drops an executable into the codecs directory (the full chain to shell)",
+      "the fix must cover both halves: restrict the outbound-fetch surface and key token attachment on the resolved address, not the string"
+    ],
+    "non_transfers": [
+      "services that require tokens on all interfaces including loopback",
+      "deployments where the port is unreachable from the attacker's network position"
+    ],
+    "confidence": {
+      "cpp": 0.92,
+      "c": 0.8,
+      "go": 0.6,
+      "java": 0.6,
+      "python": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0037",
+    "T-0048"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Plex Media Server < 1.43.3.10861 (CVE-2026-96652 / 96654 / 96655 of the plex2shell chain; T-0037 records the CVE-2026-96656 landing stage)"
+  },
+  "provenance": [
+    {
+      "src": "sources/6800992df05e980c-zmain-plex2shell.txt",
+      "author": "zmain",
+      "sha256": "6800992df05e980cabf2a52aee2f4208b67549bdbfde2d43208207704249673f",
+      "corroborates": "the full chain: timeline SSRF with any token value to 127.0.0.1; loopback reclassification; searchOne identifier injection forging plugin calls; token auto-attach on the 127.0.0.1 string prefix with wildcard-DNS exfil; CVSS 9.8"
+    },
+    {
+      "src": "sources/a20351ed00dddac9-plex-csaf-va-26-266.txt",
+      "author": "Plex (vendor CSAF va-26-266-01)",
+      "sha256": "a20351ed00dddac940ba604eb622419f2381cd9634af1bb2a76db0803c16dc69",
+      "corroborates": "vendor confirmation per CVE: SSRF via /player/timeline with any token; searchOne does not neutralize URL values, allowing calls to other plugins' functions; arbitrary internal/external addresses via the transcode path"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-96652 (with CVE-2026-96654, CVE-2026-96655) (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2026-96652 (with CVE-2026-96654, CVE-2026-96655) description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-10-20"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

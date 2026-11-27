@@ -1,0 +1,198 @@
+{
+  "id": "T-0016",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "Template-candidate resolution walks out of the theme root because the sanitiser runs on the encoded form and the sink decodes it",
+  "index_line": "T-0016 \u00b7 CODE_EXEC \u00b7 slug sanitiser preserves %2e%2f while the resolver decodes and includes \u00b7 php/all-CMS \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php",
+      "python",
+      "node",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-98",
+      "CWE-22"
+    ],
+    "capec": [
+      "CAPEC-253"
+    ],
+    "effect": "CODE_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A sanitiser and the sink that consumes its output are assumed to agree on the representation of the string. This sanitiser preserves percent-escaped octets (it rewrites literal dots and truncates at literal slashes), and the template resolver downstream decodes them \u2014 so a traversal that is impossible in the literal form is trivial in the encoded one.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the page slug arrives from the request (query string or POST body; the body wins) and names a template candidate",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the slug is sanitised \u2014 literal dots rewritten, literal slashes truncate the value, percent-escaped octets deliberately survive",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the candidate is built by continuing a real theme directory that starts with `page-` (page-templates) and is then decoded and joined onto the theme root",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 4,
+      "does": "the resolver walks `../` sequences that only exist after decoding, and lands on a readable local `.php` outside the active theme directories",
+      "primitive": "BYPASS",
+      "bypasses": "guard.resolve-check"
+    },
+    {
+      "n": 5,
+      "does": "the chosen file is included, so a readable `.php` anywhere on disk is now executed in the web-server context",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 6,
+      "does": "with register_argc_argv on, a readable CLI script (pearcmd.php) is reached through the same include and turned into arbitrary file write with attacker content",
+      "primitive": "WRITE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the slug parameter \u2014 POST body is preferred over the query string, so a GET-only filter misses half the traffic"
+    },
+    "sink.file.read": {
+      "value": "the include/require of a path derived from a request-named template candidate"
+    },
+    "encoding.path": {
+      "value": "percent-escaped traversal (%2e%2e%2f, double-encoded %252e%252e%252f, mixed case hex) \u2014 the form that survives a sanitiser which only rewrites literals"
+    },
+    "guard.resolve-check": {
+      "value": "the theme-root prefix / realpath check \u2014 it is applied to the pre-decode string, which is why it passes"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "the active (child or parent) theme has a top-level directory whose name starts with `page-`; without it the candidate never begins inside the theme and the climb-out is impossible",
+      "check": {
+        "kind": "shell",
+        "spec": "ls -d wp-content/themes/*/page-*/ 2>/dev/null | head"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the slug reaches template resolution after sanitisation (WordPress: get_page_template()); a valid object id is required or the 404 short-circuits before the vulnerable code",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "get_page_template\\s*\\(",
+            "get_page_template_slug\\s*\\(",
+            "locate_template\\s*\\("
+          ],
+          "paths": [
+            "wp-includes",
+            "wp-admin"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "build is inside the affected range and the resolver is not shadowed by a plugin/theme filter",
+      "check": {
+        "kind": "shell",
+        "spec": "grep -m1 \"wp_version =\" wp-includes/version.php  # affected: 4.7.0\u20137.1.1; fixed: 7.1.2 and backports to 4.7.37"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "register_argc_argv on promotes the include from information leak to file write (PEAR pearcmd.php readable on the host)",
+      "check": {
+        "kind": "shell",
+        "spec": "php -i | grep -i register_argc_argv"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the response body is the content of a file that is not a template of the active theme (an OPML or RSS core file served from a normal page URL is the classic tell)",
+      "traversal arrives percent-encoded and the slug begins with a `page-` directory name before the climb-out \u2014 literal `../` never works",
+      "a request carrying pearcmd plus `+config-show` confirms argv reachability, and `+config-create` writes attacker PHP to disk"
+    ],
+    "failure_like": [
+      "the sanitiser rewrites `%2e`/`%2f` as well as `.`/`/` \u2014 then the encoded form dies too",
+      "the resolver re-normalises and re-checks containment after decoding"
+    ],
+    "false_positive": [
+      "a 200 carrying theme output for an existing page \u2014 no traversal happened; the tell is foreign file content, not a status code",
+      "blocked traversal that still returns the theme's 404 template",
+      "attributing file content to the include when the same path is separately web-reachable (a real file in the web root) \u2014 check the path is outside the docroot"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "the theme precondition is not decoration: without a `page-` top-level directory the payload has nothing to continue, and scanners that skip this check report noise",
+      "POST is preferred over GET for the slug in this implementation \u2014 a GET-only WAF rule is bypassed by moving the parameter to the body",
+      "PEAR's pearcmd.php exists on the official php Docker image and on default cPanel installs below PHP 8.5 \u2014 that is what turns LFI into write without an upload"
+    ],
+    "non_transfers": [
+      "frameworks whose template resolver refuses any path containing a separator before decoding",
+      "engines that build the candidate from a fixed whitelist of template names rather than from a request-named slug",
+      "runtimes without an in-process include of arbitrary readable files (a read-only file sink is FILE_READ, not this)"
+    ],
+    "confidence": {
+      "php": 0.9,
+      "python": 0.45,
+      "node": 0.4,
+      "ruby": 0.45
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0022"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "WordPress Core 4.7.0\u20137.1.1 (CVE-2026-87902), fixed 7.1.2"
+  },
+  "provenance": [
+    {
+      "src": "sources/853339f60f86118b-wordpress-ghsa-7hp8-65ch-5whp.txt",
+      "author": "WordPress Security Team (GHSA-7hp8-65ch-5whp, reported by Robert Ressl)",
+      "sha256": "853339f60f86118ba6bd5a853d9738cce1b8f56fd16a9b7b3c2daff7c09f009e",
+      "corroborates": "sink (get_page_template), both preconditions, fixed version and backports"
+    },
+    {
+      "src": "https://patchstack.com/articles/cve-2026-87902-attackers-started-probing-wordpress-sites-hours-after-the-patch/",
+      "author": "Patchstack (Dave Jong)",
+      "corroborates": "independent: the sanitiser preserves escaped octets while rewriting literals"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-87902 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVSS 3.1 AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H, reference set incl. the vendor advisory and the independent write-up"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-09-25, due 2026-09-28"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

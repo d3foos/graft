@@ -1,0 +1,184 @@
+{
+ "id": "T-0073",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "A phone-provisioning endpoint that speaks XML to trusted peers concatenates one of its fields into a superuser SQL statement",
+ "index_line": "T-0073 · EXEC · unauthenticated /pa XML notification: PhoneIP → PostgreSQL concat → COPY TO PROGRAM → RCE · perl · corroborated",
+ "langs": {
+  "origin": "perl",
+  "transferable": [
+   "perl",
+   "php",
+   "python",
+   "ruby",
+   "node"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-89",
+   "CWE-78",
+   "CWE-306"
+  ],
+  "capec": [],
+  "effect": "EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "The notification endpoint assumed that anything able to POST a PolycomIPPhone document was another phone system already inside the trust boundary, so the PhoneIP field was handled as a validated address rather than as text that reaches a SQL parser — one that runs as the database superuser.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated POST to /pa carries an XML body beginning <PolycomIPPhone> naming a notification target"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "PhoneAppsHandler.pm parses the body with XML::Simple::XMLin and pulls PhoneIP out of the resulting structure without validation"
+  },
+  {
+   "n": 3,
+   "primitive": "CONCAT",
+   "does": "PhoneIP is spliced into a single-quoted SQL predicate (auto_phone_config WHERE ip_address = '<PhoneIP>')"
+  },
+  {
+   "n": 4,
+   "primitive": "LOOKUP",
+   "does": "the statement runs through the application's PostgreSQL handle, which connects as the database superuser"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "injected SQL extends the statement with COPY (…) TO PROGRAM, so the database server itself evaluates an OS command"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "the command runs as the database server's OS user, giving unauthenticated remote code execution"
+  }
+ ],
+ "slots": {
+  "source.http.body": {
+   "value": "an unauthenticated POST to /pa carrying a PolycomIPPhone XML document (the IP-phone notification protocol)"
+  },
+  "sink.sql.concat": {
+   "value": "PhoneIP concatenated into the single-quoted ip_address predicate, then executed by the app's PostgreSQL handle"
+  },
+  "sink.exec.shell": {
+   "value": "PostgreSQL COPY … TO PROGRAM evaluates a shell command as the database server's OS user — the SQL grammar is the shell door"
+  },
+  "guard.none": {
+   "value": "no authentication on /pa, no caller allowlist, and no parameterisation of the query"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the /pa endpoint answers without a session",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -X POST http://HOST/pa -H 'Content-Type: text/xml' --data '<PolycomIPPhone><PhoneIP>192.0.2.1</PhoneIP></PolycomIPPhone>'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the tree contains the phone-notification handler that parses XML and concatenates a field into SQL",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "PhoneAppsHandler|tel_notify|PolycomIPPhone|XML::Simple::XMLin"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the application's database role can run COPY … TO PROGRAM (superuser or pg_execute_server_program member)",
+   "check": {
+    "kind": "shell",
+    "spec": "psql \"$APP_DSN\" -tAc \"SELECT rolsuper OR pg_has_role(current_user,'pg_execute_server_program','member') FROM pg_roles WHERE rolname=current_user\""
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a boolean/UNION probe returns data that exists only in the database",
+   "the injected COPY … TO PROGRAM spawns a process: an outbound connection to the tester, or command output written to a web-served path"
+  ],
+  "failure_like": [
+   "/pa answers 404/403 or demands authentication before parsing",
+   "PhoneIP is parameterised or matched against an address allowlist, so quotes are data"
+  ],
+  "false_positive": [
+   "a 200 response to a well-formed XML body is reachability, not injection — require a database-derived difference (error text naming the predicate, or a value only the DB knows)",
+   "a generic 500 on malformed XML proves the parser ran, not that the field reached the query"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any machine-to-machine endpoint that parses XML from a peer protocol (phones, printers, PBX, monitoring agents) and reuses a field in SQL",
+   "the DB role matters more than the injection: a superuser handle turns a plain SQLi into file read/write and shell",
+   "the field looks like an IP address to every reviewer, which is why it survives code review"
+  ],
+  "non_transfers": [
+   "queries built with bound parameters",
+   "database roles limited to DML on one schema with no pg_execute_server_program membership"
+  ],
+  "confidence": {
+   "perl": 0.9,
+   "php": 0.7,
+   "python": 0.7,
+   "ruby": 0.7,
+   "node": 0.6
+  }
+ },
+ "combines_with": [],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Sangoma Switchvox SMB 8.3 (104997), unauthenticated /pa phone-notification endpoint (CVE-2026-9586)"
+ },
+ "provenance": [
+  {
+   "src": "sources/0feb3ae079c44a05-switchvox-sra.txt",
+   "author": "SRA Labs (labs.sra.io)",
+   "sha256": "0feb3ae079c44a05252cf0e6324b7063d65a6d08fb0951ae1560a1b5b5146c70",
+   "corroborates": "CVE-2026-9586: the unauthenticated /pa endpoint parses a <PolycomIPPhone> XML body and concatenates the attacker-controlled PhoneIP value directly into PostgreSQL queries without parameterisation (CWE-89)"
+  },
+  {
+   "src": "sources/7d95bfaba76807ca-switchvox-horizon3.txt",
+   "author": "Horizon3.ai Attack Research Team",
+   "sha256": "7d95bfaba76807ca86460995337893b61974be10e74f86d6c9d4015c05b1cae1",
+   "corroborates": "source-level trace of the same mechanism in PhoneAppsHandler.pm::tel_notify: XML::Simple::XMLin at line 180, PhoneIP taken unvalidated at 199/210, concatenated at 220-225, executed as PostgreSQL superuser at 226 with COPY ... TO PROGRAM"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-9586 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-9586 description, CWE-89 and CVSS"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2026-09-02"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

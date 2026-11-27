@@ -1,0 +1,187 @@
+{
+ "id": "T-0074",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The API treats the browser's origin as a presentation detail while the cookie is the whole credential, so any web page can mint tokens and reach the code validator",
+ "index_line": "T-0074 · CODE_EXEC · wildcard CORS with credentials + SameSite=None refresh cookie → token mint → /validate/code exec · python · corroborated",
+ "langs": {
+  "origin": "python",
+  "transferable": [
+   "python",
+   "node",
+   "php",
+   "ruby",
+   "java"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-346",
+   "CWE-352",
+   "CWE-942"
+  ],
+  "capec": [],
+  "effect": "CODE_EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "The service treated the Origin of a cross-site request as a rendering concern and the session cookie as the only thing worth checking; because the refresh cookie was sent cross-site and the API reflected any origin with credentials, possession of the user's browser became possession of the user's tokens — and those tokens reach an endpoint that executes code by design.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a victim holding a Langflow session loads an attacker page that issues a cross-origin request to the token-refresh endpoint with credentials"
+  },
+  {
+   "n": 2,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the refresh endpoint accepts the ambient session cookie and issues a fresh access/refresh token pair; it performs no origin or CSRF validation"
+  },
+  {
+   "n": 3,
+   "primitive": "BYPASS",
+   "bypasses": "guard.session-state",
+   "does": "the refresh cookie is SameSite=None, so the browser attaches it to the attacker's cross-site request — the cookie's own scope policy is the guard that fails"
+  },
+  {
+   "n": 4,
+   "primitive": "LOOKUP",
+   "does": "the response is readable cross-origin because Access-Control-Allow-Origin reflects the attacker's origin together with Allow-Credentials: true"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "the attacker replays the minted bearer token against POST /api/v1/validate/code"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "the validator exec()s the submitted function definitions — default arguments and decorators evaluate during validation — running attacker code in the server process"
+  }
+ ],
+ "slots": {
+  "source.http.cookie": {
+   "value": "the SameSite=None refresh-token cookie, attached by the victim's browser to the attacker's cross-site request"
+  },
+  "sink.eval": {
+   "value": "/api/v1/validate/code: the validator exec()s the submitted function definitions, so default arguments and decorators run"
+  },
+  "guard.none": {
+   "value": "no CSRF token and no Origin allowlist on the refresh endpoint; the CORS policy reflects arbitrary origins with credentials"
+  },
+  "oracle.channel": {
+   "value": "the fresh token pair lands in a response body made readable by Access-Control-Allow-Origin + Allow-Credentials"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the service configures permissive CORS with credentials or a SameSite=None session cookie",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "allow_origins|allow_credentials|samesite|SameSite"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "reachability",
+   "expr": "the API and its refresh endpoint answer over HTTP",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/api/v1/version; curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/api/v1/refresh"
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the CORS layer reflects an arbitrary Origin while allowing credentials",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -si -H 'Origin: https://evil.example' http://HOST/api/v1/refresh | grep -iE 'access-control-allow-(origin|credentials)'"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a cross-origin request from a page the tester controls returns a token pair in a body the browser exposes",
+   "the minted token is accepted by /api/v1/validate/code and the submitted function's side effect runs"
+  ],
+  "failure_like": [
+   "Access-Control-Allow-Origin echoes only a fixed allowlist and Allow-Credentials is absent",
+   "the refresh endpoint requires a CSRF token or a non-ambient header credential"
+  ],
+  "false_positive": [
+   "a wildcard ACAO on endpoints that carry no credentials is not this bug — require Allow-Credentials with a reflected origin AND a credential-bearing response",
+   "a 200 from /validate/code without executing the tester's side effect is an auth wall, not code execution"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any SPA/API split where the cookie is the credential and CORS is configured for developer convenience",
+   "SameSite=None is the tell: it exists so third-party front-ends can call the API, which is exactly the property being abused",
+   "the code-execution endpoint does not need to be new — the record is about borrowing the user's ambient authority to reach it"
+  ],
+  "non_transfers": [
+   "token-in-header designs with no ambient cookie",
+   "refresh endpoints that validate Origin against a fixed allowlist or require a CSRF token"
+  ],
+  "confidence": {
+   "python": 0.85,
+   "node": 0.7,
+   "php": 0.6,
+   "ruby": 0.6,
+   "java": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0026"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Langflow <= 1.6.9 (FastAPI backend), CORS + refresh-cookie chain to /api/v1/validate/code (CVE-2025-34291)"
+ },
+ "provenance": [
+  {
+   "src": "sources/95d4ca4bc66754b3-langflow-obsidian.txt",
+   "author": "Obsidian Security Research",
+   "sha256": "95d4ca4bc66754b328f258ac69156aed53adf6a25f6558a294ece9221749658b",
+   "corroborates": "CVE-2025-34291: Langflow allows cross-origin requests with credentials from any source, the refresh endpoint lacks CSRF defences with a SameSite=None cookie, and the /api/v1/validate/code endpoint executes submitted code by design — the chain yields one-click account takeover and RCE"
+  },
+  {
+   "src": "sources/d0298c73540c0114-langflow-vulncheck.txt",
+   "author": "VulnCheck",
+   "sha256": "d0298c73540c01140eed008a51e659f3e00a295851a7f8cc61c6f13575d505df",
+   "corroborates": "CWE-346 origin validation error: allow_origins=* combined with allow_credentials=True and a SameSite=None refresh cookie lets an attacker-controlled origin obtain fresh access/refresh token pairs, which reach the built-in code-execution endpoint"
+  },
+  {
+   "src": "MITRE/NVD CVE-2025-34291 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2025-34291 description and CWE/CVSS"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "actively exploited; KEV added 2026-05-21"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.85
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

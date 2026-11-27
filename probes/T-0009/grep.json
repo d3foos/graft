@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0009",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "session|redis|transaction|UPDATE|INSERT",
+    "balance|coupon|voucher|invite|redeem|apply|checkout|verify|stock|claim",
+    "POST|PUT|PATCH"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

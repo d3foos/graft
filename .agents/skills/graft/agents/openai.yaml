@@ -1,0 +1,10 @@
+interface:
+  display_name: "GRAFT Technique Transfer"
+  short_description: "Offline technique-transfer DB and equivalence tables."
+  icon_small: "./assets/logo.svg"
+  icon_large: "./assets/logo.svg"
+  brand_color: "#0F766E"
+  default_prompt: "Use $graft to search, adapt, and record security technique transfers offline against a target codebase."
+
+policy:
+  allow_implicit_invocation: true

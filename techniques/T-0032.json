@@ -1,0 +1,224 @@
+{
+  "id": "T-0032",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "Two guards decode the same parameter differently, and the rights object is built before the identity it is checking exists",
+  "index_line": "T-0032 \u00b7 CODE_EXEC \u00b7 double-decoded route passthrough + a rights object defaulting to super-user \u00b7 php/any-front-controller \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php",
+      "python",
+      "node",
+      "ruby",
+      "java"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-863",
+      "CWE-436",
+      "CWE-22"
+    ],
+    "effect": "CODE_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Two assumptions in one handler. First, that two checks reading the same parameter see the same value \u2014 they do not when one decodes it a second time and the other does not. Second, that an authorization object built during bootstrap knows who the caller is \u2014 it is constructed before a public-entry-point identity is established, and an undefined role constant falls through to the most privileged branch.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated request reaches a public participant-facing endpoint that supports a passthrough of internal files",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the framework has already URL-decoded the query string once; the allowlist lookup decodes the parameter again, while the companion route restriction compares the once-decoded value",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "a double-encoded value resolves to the allowlisted file for one check and fails to match the string the other check compares against",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the route restriction is therefore skipped and an arbitrary controller route is reachable from the public context",
+      "primitive": "BYPASS",
+      "bypasses": "guard.resolve-check"
+    },
+    {
+      "n": 5,
+      "does": "the front controller loads the chosen route's controller \u2014 one that was never meant to be reachable without a login",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 6,
+      "does": "the controller's rights object was constructed before the public identity was assigned, so the unresolved role constant takes the super-user branch and the capability check passes",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 7,
+      "does": "the import handler opens a caller-supplied stream/path argument, and the permitted wrapper is enough to reach an execution primitive",
+      "primitive": "READ"
+    },
+    {
+      "n": 8,
+      "does": "the wrapper/filter chain is escalated into code execution on the server",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the public endpoint's parameters: the passthrough selector, the route, and the import stream \u2014 three fields that only matter together"
+    },
+    "sink.file.read": {
+      "value": "the framework's file/stream open, reached with a caller-chosen wrapper or path"
+    },
+    "guard.resolve-check": {
+      "value": "the allowlist-plus-route-restriction pair: two checks, two decodings, one value"
+    },
+    "encoding.path": {
+      "value": "double-encoded forms (`%2569ndex.php`) chosen so the two decodings disagree"
+    },
+    "oracle.error": {
+      "value": "the framework's error surface tells you which of the two checks you satisfied \u2014 use it to tune the encoding"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "a public (unauthenticated) entry point exists that passes through to internal files or controllers",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "passthru|__passthru|require_once.*DOCROOT|include.*\\$_GET|route=|controller="
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "one guard decodes the parameter a second time while the other does not",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "urldecode\\s*\\(\\s*\\$_GET|decodeURIComponent|url_decode\\(",
+            "arrays?_search\\(.*urldecode"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the rights/authorization object is instantiated before the public identity is established, and an undefined role constant is treated as privileged",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "new UserRights|Auth::authenticate|defined\\('SUPER_USER'\\)|SESSION\\['username'\\]|define\\('USERID'"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "version is in the affected range",
+      "check": {
+        "kind": "shell",
+        "spec": "grep -Rho \"\\$version\\s*=\\s*'[0-9.]*'\" *.php config.php 2>/dev/null | head"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a double-encoded passthrough value is accepted while the plain one is rejected (or vice versa) \u2014 that asymmetry is the bug",
+      "an internal controller's output or error appears in a response to an unauthenticated request",
+      "the stream parameter's error names a wrapper or filter rather than a missing file, showing the read happened"
+    ],
+    "failure_like": [
+      "both checks operate on the same decoded value \u2014 one encoding, one answer",
+      "the rights object is built only after the public identity is set, or an undefined role resolves to the least-privileged branch"
+    ],
+    "false_positive": [
+      "a 200 from the public endpoint that never leaves the allowlist \u2014 confirm the response body came from the internal controller",
+      "an error page mentioning the controller name because the route was rejected, not executed",
+      "claiming the shell from the encoding trick alone: the route reachability and the rights-order defect are separate links in the chain"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "audit decode counts: any parameter that two checks read must be decoded the same number of times. Grep every `urldecode($_GET...)` \u2014 it is almost always the bug",
+      "bootstrap ordering is the second half: a rights object created before the identity exists is a default-allow bug, and undefined-constant fall-through makes it privileged",
+      "the reachable controller is chosen at runtime, so enumerate the route map and pick the one whose parameters are most dangerous",
+      "public-facing entry points (surveys, forms, previews, password resets) deliberately define NOAUTH and then build privilege state \u2014 read those handlers first"
+    ],
+    "non_transfers": [
+      "frameworks that decode once, into a single normalised request object that every guard shares",
+      "rights objects constructed lazily after the identity is resolved",
+      "controller dispatch that re-applies the route's own access policy after passthrough"
+    ],
+    "confidence": {
+      "php": 0.8,
+      "python": 0.6,
+      "node": 0.6,
+      "ruby": 0.55,
+      "java": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0016",
+    "T-0006"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Vanderbilt REDCap survey passthrough + Data Import (CVE-2026-90817)"
+  },
+  "provenance": [
+    {
+      "src": "sources/4384fefb4dbd7107-redcap-blog.txt",
+      "author": "Securifera research (CVE-2026-90817 finder)",
+      "sha256": "4384fefb4dbd71074e4989b8387d084e75872a34ddc864b7fc21eb51fa6e4b95",
+      "corroborates": "the __passthru double-decode with the exact value at each stage, the route restriction skipped, the UserRights-before-identity ordering, and the DataImport route"
+    },
+    {
+      "src": "https://www.securifera.com/advisories/",
+      "author": "Securifera advisory index (CVE-2026-90817)",
+      "corroborates": "formal advisory record for the unauthenticated RCE"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-90817 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD / Vanderbilt (CNA)",
+      "corroborates": "'survey passthrough routing and Data Import processing logic \u2026 access an unintended controller route from a public survey context \u2026 crafted file-path/stream parameter'; CVSS 3.1 9.8"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-11-18, due 2026-11-21 \u2014 the newest entry in this batch"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.8
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

@@ -1,0 +1,209 @@
+{
+  "id": "T-0027",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A management bridge exposes an operation that takes a URI; the broker fetches it and a bean factory instantiates it",
+  "index_line": "T-0027 \u00b7 EXEC \u00b7 Jolokia exec \u2192 addNetworkConnector(URI) \u2192 broker fetches remote Spring XML \u2192 ProcessBuilder bean \u00b7 java/any-JMX-bridge \u00b7 corroborated",
+  "langs": {
+    "origin": "java",
+    "transferable": [
+      "java",
+      "python",
+      "node",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-20",
+      "CWE-94",
+      "CWE-918"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "The management plane is assumed to be post-exploitation: if you can call it, you already own the box. But a management operation that accepts a *URI* turns a control-plane call into an outbound fetch, and the fetched document is interpreted by a bean factory \u2014 so control-plane access becomes code execution, and the component that should only be configured becomes the execution engine.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a request reaches the JMX-over-HTTP bridge and names an MBean operation with arguments",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the bridge resolves the mbean/operation names against the live MBean server \u2014 the default policy allows exec on every application MBean",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the chosen operation registers a network connector whose discovery URI carries a broker-config parameter pointing at an attacker-hosted document",
+      "primitive": "CONNECT"
+    },
+    {
+      "n": 4,
+      "does": "the broker resolves that URI and fetches the document, treating an arbitrary resource as its own configuration",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 5,
+      "does": "the configuration is a Spring bean definition, and the factory instantiates every singleton bean \u2014 including ones whose constructor or init-method runs a process",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 6,
+      "does": "the command runs in the broker's JVM before the broker decides the resulting object was not a usable broker",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "the Jolokia JSON exec body (`mbean`, `operation`, `arguments`) \u2014 or any JMX/actuator/admin bridge with an exec-style endpoint"
+    },
+    "sink.http.request": {
+      "value": "the server-side fetch of the attacker's URI \u2014 the SSRF that is not the impact, just the delivery"
+    },
+    "delegate.tool": {
+      "value": "the bean/config/document factory that instantiates attacker-named classes (Spring `ResourceXmlApplicationContext`, xbean, SpEL, template loaders)"
+    },
+    "fs.path.join": {
+      "value": "the resource-URI scheme selector: only some schemes can be dereferenced from the config loader, so the scheme is the working part of the payload"
+    },
+    "guard.none": {
+      "value": "the bridge's access policy permits exec on all application MBeans; there is no operation allow-list"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the JMX/HTTP bridge is exposed and its access policy permits exec on application MBeans",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -u admin:admin http://HOST:8161/api/jolokia/version | head -c 200; curl -s -u admin:admin 'http://HOST:8161/api/jolokia/exec/org.apache.activemq:type=Broker,brokerName=localhost/addNetworkConnector(java.lang.String)/x' -o /dev/null -w '%{http_code}\\n'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "an operation exists whose argument is a URI the server will dereference",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "addNetworkConnector|addConnector|brokerConfig|discoveryUri",
+            "ResourceXmlApplicationContext|xbean:|ClassPathXmlApplicationContext"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "default or weak console credentials, or the bridge is reachable without auth (the vendor's own default is a well-known admin pair)",
+      "check": {
+        "kind": "shell",
+        "spec": "grep -Ril 'admin:admin\\|jetty-realm\\|jolokia' conf/ etc/ 2>/dev/null | head"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "build is inside the affected range (ActiveMQ < 5.19.4 or 6.0.0\u20136.2.2)",
+      "check": {
+        "kind": "shell",
+        "spec": "ls lib/activemq-broker-*.jar 2>/dev/null | sed 's/.*activemq-broker-//;s/.jar//'"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the exec call returns status 200 with a non-null value, and the broker log then shows the attacker URI in an 'Establishing network connection' line",
+      "the broker fetches the attacker's XML (visible in the attacker's HTTP log) and a child process appears under the broker JVM",
+      "the command repeats on the connector's retry timer \u2014 one request, many executions"
+    ],
+    "failure_like": [
+      "the bridge answers 403/404 for exec, or the policy denies the MBean \u2014 nothing to drive",
+      "no operation in the MBean takes a dereferenceable URI"
+    ],
+    "false_positive": [
+      "a 200 from a different Jolokia operation (e.g. `version`) \u2014 proves the bridge is up, not that exec is permitted",
+      "a broker-log warning that the connector could not connect: that message is *after* the fact, the bean already ran \u2014 do not read it as failure",
+      "attributing execution to the access log; the evidence is in the broker log and in child processes"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.http.request.json",
+      "vocab/equivalents/fs.path.join.json"
+    ],
+    "hazards": [
+      "the honest CVSS for this one is PR:L (an authenticated console user); it is KEV'd because default console credentials are the norm, so establish credentials before claiming pre-auth",
+      "the retry timer means a single request produces repeated fetches \u2014 clean up the connector or the lab keeps calling you",
+      "management planes are systematically under-audited: Actuator, Jolokia, JMX, admin RPC, and debug endpoints all take operations whose arguments reach file/URL loaders",
+      "the vendor's first patch was bypassed (CVE-2026-42588) \u2014 check the target build against the current advisory, not the first fixed release"
+    ],
+    "non_transfers": [
+      "bridges whose access policy is a strict operation allow-list rather than a per-MBean exec flag",
+      "config loaders that refuse non-local resource schemes (the fix: the broker no longer loads brokerConfig over an arbitrary URI)"
+    ],
+    "confidence": {
+      "java": 0.9,
+      "python": 0.6,
+      "node": 0.6,
+      "ruby": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0003",
+    "T-0007"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Apache ActiveMQ Broker < 5.19.4 / 6.0.0\u20136.2.2 via Jolokia (CVE-2026-34197)"
+  },
+  "provenance": [
+    {
+      "src": "sources/79fdc47456cde7ee-activemq-apache.txt",
+      "author": "Apache ActiveMQ security advisory (CVE-2026-34197 announcement, vendor)",
+      "sha256": "79fdc47456cde7ee495746046a8c3a16eeb70b87835b670843949894a105256c",
+      "corroborates": "the Jolokia policy, the permitted exec operations, the brokerConfig\u2192ResourceXmlApplicationContext path, and the finder credit (Naveen Sunkavally, Horizon3.ai)"
+    },
+    {
+      "src": "https://www.damonsec.com/blog/cve-2026-34197-activemq-jolokia-rce-reproduce",
+      "author": "damonsec.com lab reproduction",
+      "corroborates": "independent lab reproduction with the working Jolokia exec body, the Spring XML bean payload, the 'warning is after the fact' nuance, and detection guidance"
+    },
+    {
+      "src": "http://www.openwall.com/lists/oss-security/2026/04/06/3",
+      "author": "oss-security (Openwall mailing list)",
+      "corroborates": "public disclosure record, independent of the vendor page"
+    },
+    {
+      "src": "https://access.redhat.com/security/cve/CVE-2026-34197",
+      "author": "Red Hat Product Security",
+      "corroborates": "independent CVE analysis and affected-product mapping"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-34197 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-20/CWE-94, CVSS 3.1 8.8 AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-04-16; EPSS 0.983"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.86
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

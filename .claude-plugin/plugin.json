@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "graft",
+  "version": "1.0.0",
+  "description": "Offline, stdlib-only technique-transfer library for security research: slot-parameterised vulnerability mechanisms, execution-verified sink equivalence tables, trust gating, and an append-only outcome ledger.",
+  "author": {
+    "name": "Abdulrahman Almuhairi",
+    "url": "https://github.com/d3foos"
+  },
+  "homepage": "https://github.com/d3foos/graft",
+  "repository": "https://github.com/d3foos/graft.git",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "security",
+    "vulnerability-research",
+    "technique-transfer",
+    "offline",
+    "sqlite",
+    "agent-skills"
+  ]
+}

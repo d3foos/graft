@@ -1,0 +1,179 @@
+{
+  "family": "sink.memory.copy",
+  "effect": "MEM_WRITE",
+  "rev": 1,
+  "note": "Native copy/alloc bounded by an untrusted length: the memcpy/strcpy family, buffer sizing, and binding-layer copies. Every cell below is DOCUMENTED-ONLY (needs_local_verification) — bounds bugs are target facts; grep hits are candidate sites, never proven reachability. Vendor patch-diffing (T-0014's method) is how the real invariant gets pinned per target.",
+  "cells": {
+    "c": {
+      "sinks": [
+        {
+          "name": "memcpy(dst, src, n) / memmove / bcopy",
+          "gates": [
+            "n attacker-influenced or derived from a protocol field; the vendor patch usually adds the missing bound — diff affected vs fixed builds"
+          ]
+        },
+        {
+          "name": "strcpy / strcat / sprintf family",
+          "gates": [
+            "no bound parameter at all — the classic unbounded copy"
+          ]
+        },
+        {
+          "name": "alloca / variable-length array sized by input",
+          "gates": [
+            "the stack-exhaustion sibling of the same invariant"
+          ]
+        }
+      ],
+      "patterns": [
+        "memcpy\\s*\\(",
+        "memmove\\s*\\(",
+        "\\bstrcpy\\s*\\(",
+        "\\bstrcat\\s*\\(",
+        "\\bsprintf\\s*\\("
+      ],
+      "verified": {
+        "how": "documented",
+        "source": "C standard library semantics (ISO C99 §7.21.2/7.21.6) and vendor advisories",
+        "needs_local_verification": true
+      }
+    },
+    "cpp": {
+      "sinks": [
+        {
+          "name": "std::memcpy / std::copy into a raw buffer",
+          "gates": [
+            "same untrusted-length invariant as C; std::copy hides the memcpy spelling"
+          ]
+        },
+        {
+          "name": "std::string::assign / resize / append sized by external input",
+          "gates": [
+            "allocation-size DoS flavor; native write needs a raw-buffer target"
+          ]
+        },
+        {
+          "name": "char buf[N] + memcpy from protocol field",
+          "gates": [
+            "fixed-size destination is what makes the length 'unchecked'"
+          ]
+        }
+      ],
+      "patterns": [
+        "memcpy\\s*\\(",
+        "std\\s*::\\s*copy\\s*\\(",
+        "\\.assign\\s*\\(",
+        "\\.resize\\s*\\("
+      ],
+      "verified": {
+        "how": "documented",
+        "source": "C++ standard library semantics (cppreference: std::memcpy/preconditions)",
+        "needs_local_verification": true
+      }
+    },
+    "php": {
+      "sinks": [
+        {
+          "name": "FFI::memcpy / FFI cast onto a C buffer",
+          "gates": [
+            "requires the FFI extension enabled — rare in shared hosting; native surface by construction"
+          ]
+        },
+        {
+          "name": "str_repeat / substr sized by attacker input",
+          "gates": [
+            "heap-exhaustion flavor; memory_limit converts the write into a DoS, not corruption"
+          ]
+        }
+      ],
+      "patterns": [
+        "FFI\\s*::\\s*memcpy",
+        "str_repeat\\s*\\(",
+        "ffi->new\\s*\\("
+      ],
+      "verified": {
+        "how": "documented",
+        "source": "PHP FFI docs and memory_limit semantics",
+        "needs_local_verification": true
+      }
+    },
+    "python": {
+      "sinks": [
+        {
+          "name": "ctypes.memmove / ctypes.memcpy",
+          "gates": [
+            "raw pointer target required — a ctypes buffer is the native surface"
+          ]
+        },
+        {
+          "name": "bytearray(n) / bytes * k with attacker n",
+          "gates": [
+            "allocation-size exhaustion; corruption needs the ctypes layer"
+          ]
+        }
+      ],
+      "patterns": [
+        "ctypes\\.mem(move|cpy)",
+        "ctypes\\.create_string_buffer",
+        "bytearray\\s*\\("
+      ],
+      "verified": {
+        "how": "documented",
+        "source": "ctypes documentation (raw memory semantics)",
+        "needs_local_verification": true
+      }
+    },
+    "node": {
+      "sinks": [
+        {
+          "name": "Buffer.allocUnsafe(n) / buf.copy with attacker size",
+          "gates": [
+            "uninitialized memory exposure (allocUnsafe) is the adjacent read-side bug; write side needs a typed-array target"
+          ]
+        },
+        {
+          "name": "buf.write(str, offset, length) with protocol length",
+          "gates": [
+            "bounds enforced by Buffer in modern node — the bug class lives in native addons (N-API)"
+          ]
+        }
+      ],
+      "patterns": [
+        "allocUnsafe\\s*\\(",
+        "\\.copy\\s*\\(",
+        "\\.write\\s*\\("
+      ],
+      "verified": {
+        "how": "documented",
+        "source": "Node Buffer API documentation (bounds semantics)",
+        "needs_local_verification": true
+      }
+    },
+    "ruby": {
+      "sinks": [
+        {
+          "name": "FFI::Library / memcpy via ruby-ffi",
+          "gates": [
+            "native surface exists only when a gem binds C — check the Gemfile"
+          ]
+        },
+        {
+          "name": "String#setbyte / String#* sized by input",
+          "gates": [
+            "MRI bounds-checks these — corruption routes through the FFI layer"
+          ]
+        }
+      ],
+      "patterns": [
+        "ffi\\s*::",
+        "setbyte\\s*\\(",
+        "memmove"
+      ],
+      "verified": {
+        "how": "documented",
+        "source": "ruby-ffi documentation and MRI String semantics",
+        "needs_local_verification": true
+      }
+    }
+  }
+}

@@ -1,0 +1,192 @@
+{
+  "id": "T-0046",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The 'force' variant of a reset flow is reachable without a session and without a token",
+  "index_line": "T-0046 \u00b7 AUTH_DECISION \u00b7 an administrative force-reset endpoint skips the token check the normal reset performs \u00b7 java/dotnet/node \u00b7 corroborated",
+  "langs": {
+    "origin": "dotnet",
+    "transferable": [
+      "dotnet",
+      "java",
+      "python",
+      "node",
+      "php",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-287",
+      "CWE-620",
+      "CWE-862"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A password-reset flow is assumed to be safe because it is *the* flow that has to be reachable without a session, and it is guarded by a token instead. A second endpoint exists for administrators to force a reset without the user's involvement \u2014 it reasonably skips the token, and unreasonably also skips the caller's authentication, because 'only an admin can reach it' was assumed rather than enforced.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated attacker posts to the administrative force-reset endpoint, naming the system administrator account",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the API resolves the target account from the supplied identifier and selects the admin record",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the endpoint performs none of the checks the normal reset performs \u2014 no reset token, no existing password, no caller session",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the new password is written to the administrator account",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the attacker authenticates as the administrator, and the product's own administrative features supply execution",
+      "primitive": "AUTHZ_CHECK"
+    }
+  ],
+  "slots": {
+    "sink.auth.jwt-verify": {
+      "value": "the token/credential verification call site that the *normal* reset path uses and this path omits \u2014 the absence is the bug"
+    },
+    "source.http.request": {
+      "value": "one anonymous POST naming the target account; no cookie, no token, no CSRF"
+    },
+    "guard.none": {
+      "value": "the assumption that the endpoint is unreachable except by an administrator, with no check that it is"
+    },
+    "oracle.error": {
+      "value": "the endpoint's response distinguishes 'account exists' from 'account does not', which makes target selection trivial"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the reset API is reachable without a session",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -X POST https://HOST/api/authentication/force-reset-password -H 'Content-Type: application/json' -d '{\"email\":\"x@y\"}'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the force/administrative variant exists alongside the token-based flow and shares its account-write path",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "force-reset|ForceReset|admin-reset|forceResetPassword",
+            "ResetPassword|reset_token|ResetToken"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "the normal reset path verifies a token while the force path does not \u2014 diff the two handlers",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "compare the two controller methods: the difference in their guard clauses is the finding"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an anonymous POST changes the administrator's password, and the attacker then logs in with it",
+      "the normal reset endpoint correctly demands a token \u2014 the asymmetry between the two endpoints is the proof",
+      "the endpoint's response leaks whether the target account exists"
+    ],
+    "failure_like": [
+      "the force endpoint requires a caller session with administrative rights",
+      "both variants funnel through one verification function that the force path cannot skip"
+    ],
+    "false_positive": [
+      "a 401 returned by the endpoint with no body \u2014 the endpoint is guarded; the finding needs the password to actually change",
+      "reset emails being sent: that is the token flow working, not a bypass"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.auth.jwt-verify.json"
+    ],
+    "hazards": [
+      "the audit unit is the *pair* of endpoints: any administrative variant of a user-facing flow is a candidate for a missing check",
+      "administrative endpoints are often excluded from authentication reviews because 'the UI only shows them to admins' \u2014 the UI is not the gate",
+      "after reset you have admin, and admin usually means the vendor's own execution features; impact is full compromise, not just account takeover",
+      "this is not the same as T-0035 (JIT provisioning trusts a claim): here no IdP is involved at all \u2014 the check is simply absent on one route"
+    ],
+    "non_transfers": [
+      "systems whose force-reset requires an authenticated admin session",
+      "designs where both variants call one guarded function"
+    ],
+    "confidence": {
+      "dotnet": 0.85,
+      "java": 0.8,
+      "python": 0.75,
+      "node": 0.75,
+      "php": 0.75,
+      "ruby": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0019",
+    "T-0035"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "SmarterTools SmarterMail < build 9511, force-reset-password (CVE-2026-23760)"
+  },
+  "provenance": [
+    {
+      "src": "sources/3641e14034f9acac-smartermail-watchtowr.txt",
+      "author": "watchTowr Labs (WT-2026-0001, Piotr Bazydlo + Sina Kheirkhah)",
+      "sha256": "3641e14034f9acac485b9d0d7795bcc6c434d04c397007b72048303f96041ad0",
+      "corroborates": "the ForceResetPassword controller method, the missing token/credential checks, and the decompiler-assisted discovery path"
+    },
+    {
+      "src": "https://www.huntress.com/blog/smartermail-account-takeover-leading-to-rce",
+      "author": "Huntress (independent, in-the-wild)",
+      "corroborates": "independent exploitation reporting: admin reset leading to RCE"
+    },
+    {
+      "src": "https://code-white.com/public-vulnerability-list/#authenticationserviceforceresetpassword-missing-authentication-in-smartermail",
+      "author": "CODE WHITE (independent vulnerability list)",
+      "corroborates": "independent record naming the missing authentication on the force-reset-password endpoint"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-23760 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'permits anonymous requests and fails to verify the existing password or a reset token'; CWE-288; CVSS 3.1 9.9"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-01-26; EPSS 0.964"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

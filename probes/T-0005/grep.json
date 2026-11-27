@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0005",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "child_process|subprocess|os\\.system|Runtime|ProcessBuilder|system\\s*\\(|popen|proc_open|exec\\s*\\(",
+    "delegates\\.xml|%f|%u|\\{filename\\}|\\$\\{file\\}",
+    "req\\.(file|body|query)|filename|file\\.name|entry\\.name"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

@@ -1,0 +1,189 @@
+{
+  "id": "T-0025",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "The 'authentication failed' sentinel and the 'no password can ever match' sentinel are the same string",
+  "index_line": "T-0025 \u00b7 AUTH_DECISION \u00b7 a >256-byte password makes crypt() return the same `*` that the account's locked hash already is \u00b7 c/php/python/ruby \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "php",
+      "python",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-287",
+      "CWE-697",
+      "CWE-1391"
+    ],
+    "capec": [
+      "CAPEC-115"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A locked account is represented by a sentinel value in the password field (`*`), and the hash-comparison layer assumes any computed value that equals it cannot exist. That assumption breaks the moment the hashing function *also* uses that same string to signal its own failure: two very different meanings collapse into one byte, and the comparison has no way to tell 'nobody can log in' from 'I could not compute anything'.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker connects to the service and offers a password for an account whose password field is the locked sentinel",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the credential layer borrows another account's salt so that a locked account costs the same wall-clock time as a real one (a timing-equalisation workaround added years earlier for user enumeration)",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the password is handed to the hashing function with that borrowed setting; the function refuses inputs over its own length cap and signals failure by returning the same sentinel character",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "the returned value is compared with the stored field \u2014 and both sides are now the identical sentinel string",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 5,
+      "does": "equality is read as a successful match, so the session is marked authenticated without any real credential ever being verified",
+      "primitive": "AUTHZ_CHECK"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "the credential exchange of a network protocol (SSH userauth, or any pre-auth password field) \u2014 the payload is a *length*, not a string content"
+    },
+    "size.length": {
+      "value": "the input length that trips the hashing library's own cap (here 257\u20131024 bytes vs a 256-byte cap); the length is the whole exploit, the bytes are irrelevant"
+    },
+    "guard.none": {
+      "value": "no layer distinguishes 'hash function failed' from 'account is locked'; the comparison is a plain string equality with no error channel"
+    },
+    "encoding.string": {
+      "value": "the sentinel byte itself \u2014 `*` in `shadow`, `!`/`!!`/`NP` on other systems; any value that doubles as both 'locked' and 'error' is the same bug"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the hashing implementation returns a non-NULL sentinel on failure rather than failing loudly (musl libc's crypt returns `*`)",
+      "check": {
+        "kind": "shell",
+        "spec": "python3 -c \"import crypt,sys; sys.stdout.write(repr(crypt.crypt('A'*300, '$6$saltsalt$')))\" 2>/dev/null || perl -e 'print crypt(\"A\"x300, \"\\\\$6\\\\$saltsalt\\\\$\"),\"\\n\"'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "at least one account's password field is the locked sentinel and password authentication is enabled",
+      "check": {
+        "kind": "shell",
+        "spec": "getent shadow | awk -F: '$2==\"*\" || $2==\"!\" {print $1}' | head; grep -Ei '^\\\\s*PasswordAuthentication' /etc/ssh/sshd_config"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "a second account exists with a real $5$/$6$ hash, whose salt is what gets borrowed for the timing-equalisation path",
+      "check": {
+        "kind": "shell",
+        "spec": "getent shadow | awk -F: '$2 ~ /^\\\\$[56]\\\\$/ {print $1}' | head"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the build lacks PAM (PAM path never calls crypt for a locked account, so it is not affected)",
+      "check": {
+        "kind": "shell",
+        "spec": "sshd -T 2>/dev/null | grep -i usepam; ldd $(command -v sshd) | grep -i libpam || echo 'no PAM linked'"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a password of 257\u20131024 bytes authenticates to an account that has no password at all, first try, no retries",
+      "the same account rejects a normal-length password \u2014 the length is the switch, not the content",
+      "an account with a real hash still rejects the long password, so the target must be the locked one"
+    ],
+    "failure_like": [
+      "the build uses PAM, or the hashing function returns NULL/error instead of a sentinel \u2014 the comparison then fails as it should",
+      "no account has a real $5$/$6$ hash to borrow a salt from, so the timing path is never taken",
+      "password authentication is disabled entirely"
+    ],
+    "false_positive": [
+      "any long password being *rejected* proves nothing \u2014 the test is acceptance on a locked account",
+      "key-based login succeeding for a key-only user is expected behaviour, not this bug",
+      "a host where root is locked by `!` (not `*`) is a different sentinel and may behave differently \u2014 check the actual field"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "this is a sentinel-collision bug, so the audit question is 'which value means locked, and can the hasher ever return it?' \u2014 grep the comparison, not the auth flow",
+      "the trigger is a length cap inside a third-party libc/hashing library, not in the application; CVE-2016-6210's timing workaround is what put the borrowed salt in the path",
+      "PAM vs no-PAM changes everything: the same binary is affected or not depending on the libc and the PAM linkage, so confirm both before claiming",
+      "the same shape recurs wherever 'no value' and 'error' are both encoded as the same constant \u2014 test the constant, not the protocol"
+    ],
+    "non_transfers": [
+      "glibc builds and PAM-enabled builds, where the locked path never reaches this comparison",
+      "password fields locked with a value the hasher can never produce (e.g. `!` on a system whose failure sentinel is `*`)",
+      "protocols that treat an authentication failure as an exception rather than a boolean comparison"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "php": 0.5,
+      "python": 0.5,
+      "ruby": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0011"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "OpenSSH < 10.6p2 on musl libc without PAM (CVE-2026-123158); fixed 10.6p2"
+  },
+  "provenance": [
+    {
+      "src": "sources/7aa9da51bd708ccc-openssh-sshhole.txt",
+      "author": "sshole.com research write-up (independent, CVE-2026-123158)",
+      "sha256": "7aa9da51bd708ccca864c133c393c69e71178d10623c9a47acafd140da93834c",
+      "corroborates": "full lineage: the 1980 `*` sentinel, musl's 2012 NULL\u2192`*` change, the 256-byte cap, CVE-2016-6210's borrowed salt, and the resulting `*`==`*` comparison, with commit links"
+    },
+    {
+      "src": "https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/",
+      "author": "Alpine Linux security team",
+      "corroborates": "affected configurations (musl, no PAM), the one-connection no-retry behaviour, and the operational fix (upgrade + restart, or PasswordAuthentication no)"
+    },
+    {
+      "src": "https://www.openssh.org/releasenotes.html#10.6p2",
+      "author": "OpenBSD / OpenSSH project (10.6p2 release notes)",
+      "corroborates": "the fix shipped in 10.6p2; 'lacks a workaround for a password authentication bypass'"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-123158 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'misinterpretation of whether a string is intended to be a password hash'; any password 256\u20131024 chars; CVSS 3.1 8.1 AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-11-09, due 2026-11-12"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

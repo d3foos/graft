@@ -1,0 +1,192 @@
+{
+ "id": "T-0091",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "Pre-signed URLs are signed with a key that may be empty, so 'signed' means 'anyone can sign it' for any user",
+ "index_line": "T-0091 · AUTH_DECISION · pre-signed WebDAV URL with an empty per-user signing key: forge the signature for any victim · php · corroborated",
+ "langs": {
+  "origin": "php",
+  "transferable": [
+   "php",
+   "python",
+   "node",
+   "ruby",
+   "java",
+   "go",
+   "dotnet"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-287",
+   "CWE-345",
+   "CWE-1188"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "The pre-signed URL scheme assumed a per-instance signing key exists and is secret: possession of a valid signature therefore proves the issuer authorised the access. When no key is configured the secret is empty, so the signature is a computation anyone can perform — the check still runs, and still passes, for a caller who was never authorised.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated request arrives at a WebDAV/pre-signed URL naming a victim username"
+  },
+  {
+   "n": 2,
+   "primitive": "LOOKUP",
+   "does": "the server derives the signing key for that owner's files; with none configured it uses an empty secret"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "the supplied signature is verified as an HMAC over the URL with that key"
+  },
+  {
+   "n": 4,
+   "primitive": "BYPASS",
+   "bypasses": "guard.signature",
+   "does": "the comparison succeeds because the key is empty and computable, not because the caller is authorised"
+  },
+  {
+   "n": 5,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the request proceeds under the victim's identity"
+  },
+  {
+   "n": 6,
+   "primitive": "READ",
+   "does": "the caller reads, modifies or deletes any file as that user without authentication"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "the WebDAV/pre-signed URL: username plus signature as query parameters, no session"
+  },
+  "guard.signature": {
+   "value": "the HMAC check whose key is empty when no signing key is configured"
+  },
+  "sink.file.read": {
+   "value": "the file operation performed as the victim user once the check passes"
+  },
+  "encoding.string": {
+   "value": "the signature is a computable string over public inputs, so an empty key makes it forgeable"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the ownCloud instance exposes WebDAV and pre-signed URLs",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/remote.php/dav/; curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/status.php"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build predates 10.13.1",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s http://HOST/status.php | head -c 200"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the pre-signed URL code path signs with a possibly-empty key",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "pre-?signed|signing.?key|hmac"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a URL with a signature computed over an empty key returns file contents for a user the tester never authenticated as",
+   "the same forged URL can modify or delete a file"
+  ],
+  "failure_like": [
+   "pre-signed URLs are refused when no signing key is configured (10.13.1+ behaviour)",
+   "the instance has a key configured, so the signature cannot be computed"
+  ],
+  "false_positive": [
+   "a public share link is meant to be unauthenticated — require access to a victim-owned file outside any share",
+   "a 401/403 with a signature error is the check working"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every 'signed URL' design: the signature's meaning collapses when the key is absent, default, or globally shared",
+   "the username is part of the signed material, so knowing a username is the only prerequisite",
+   "'configured in production' is not a security control — a default install is the target"
+  ],
+  "non_transfers": [
+   "implementations that refuse to issue or accept pre-signed URLs without a non-empty key",
+   "per-user keys derived from a server secret that always exists"
+  ],
+  "confidence": {
+   "php": 0.85,
+   "python": 0.7,
+   "node": 0.7,
+   "ruby": 0.65,
+   "java": 0.6,
+   "go": 0.6,
+   "dotnet": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0042",
+  "T-0086"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "ownCloud core before 10.13.1, WebDAV pre-signed URL authentication (CVE-2023-49105)"
+ },
+ "provenance": [
+  {
+   "src": "sources/121df3404829bf70-owncloud-advisory-presigned.txt",
+   "author": "ownCloud (security advisory)",
+   "sha256": "121df3404829bf70f1b44718f663bad658ef4d58265991d47dd8269d61ff46a5",
+   "corroborates": "CVE-2023-49105: it is possible to access, modify or delete any file without authentication if the username of the victim is known; the fix denies pre-signed URLs when no signing key is configured for the owner of the files"
+  },
+  {
+   "src": "sources/8aafafbe58a20b06-owncloud-huntio-campaign.txt",
+   "author": "Hunt.io (Attack Capture)",
+   "sha256": "8aafafbe58a20b060fe056288d70716737d8748c475e940af458fb9a3834d484",
+   "corroborates": "in-the-wild use: scripts targeted an ownCloud instance using pre-signed URLs generated with an empty signing secret, allowing unauthenticated retrieval of files over WebDAV; the operator even hosted a local ownCloud to test the technique"
+  },
+  {
+   "src": "MITRE/NVD CVE-2023-49105 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2023-49105 description and affected versions"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.85
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

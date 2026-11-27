@@ -1,0 +1,186 @@
+{
+  "id": "T-0057",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "An archive member names its own destination path, and the extractor joins it onto the target directory",
+  "index_line": "T-0057 \u00b7 FILE_WRITE \u00b7 a crafted member path escapes the extraction root, into a folder something runs from \u00b7 c/any-archiver \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "python",
+      "node",
+      "ruby",
+      "go",
+      "rust"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-22",
+      "CWE-35"
+    ],
+    "effect": "FILE_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "Extraction is assumed to be a reproduction: the archive's paths are its content, so writing them out faithfully is the feature. But a member path is attacker-authored data, and joining it onto the chosen directory lets it walk out. The archive is a delivery vehicle whose payload is a path, so content scanning never sees it.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker builds an archive whose member names contain traversal or absolute components",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the extractor parses the member table and takes each stored path as the destination",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the member path is joined onto the extraction directory, and dot segments or a drive/root prefix resolve as written",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 4,
+      "does": "the file is written outside the target directory, typically into a startup or auto-load location",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the payload runs at next logon or next service start, with no further attacker action",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.file.name": {
+      "value": "the member path inside the archive \u2014 the user opens the container, the path inside it is the weapon"
+    },
+    "fs.path.join": {
+      "value": "the join of extraction root with member name; the reset and dot-segment semantics decide whether it escapes"
+    },
+    "encoding.path": {
+      "value": "dot segments, absolute paths, drive-relative prefixes, and separator variants"
+    },
+    "sink.file.write": {
+      "value": "the extraction write; the destination is the payload"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "the extractor honours member paths without confining them",
+      "check": {
+        "kind": "shell",
+        "spec": "extract a test archive with a traversing member and see where the file lands"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "a writable location outside the target directory is useful to the attacker (startup folder, plugin dir, cron)",
+      "check": {
+        "kind": "shell",
+        "spec": "ls -d \"$APPDATA/Microsoft/Windows/Start Menu/Programs/Startup\" 2>/dev/null; ls -d /etc/cron.d /etc/init.d 2>/dev/null"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the user can be induced to open the archive",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "confirm the delivery vector and that no warning fires for the container itself"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a file appears outside the directory the user chose for extraction",
+      "the escaped file sits in a location that executes at logon or service start",
+      "the archive's member table shows the traversal \u2014 the container looks benign to content scanners"
+    ],
+    "failure_like": [
+      "member paths are canonicalised and rejected when they leave the root",
+      "extraction is sandboxed with the destination read-only outside the target"
+    ],
+    "false_positive": [
+      "a file with dot segments in its name that stays inside the root after canonicalisation",
+      "a rejected traversal: confirm the file did not land, not that the request succeeded"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/fs.path.join.json"
+    ],
+    "hazards": [
+      "zip-slip applies to every unpacker: archive, backup restore, package deploy, container image layer, plugin install",
+      "detection has to look inside the container \u2014 an attachment scanner reading bytes sees no payload",
+      "the escape only matters because of where it writes; enumerate writable auto-load locations per platform before claiming impact",
+      "related to T-0006 (a request parameter joined onto a base): there the escape comes from a parameter, here from the container's own structure, and the fix differs \u2014 reject the member rather than normalise the join"
+    ],
+    "non_transfers": [
+      "extractors that reject absolute and traversing member names, or write via handles opened relative to a directory",
+      "sandboxed extraction with a read-only destination"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.85,
+      "python": 0.8,
+      "node": 0.8,
+      "ruby": 0.75,
+      "go": 0.75,
+      "rust": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0052"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "RARLAB WinRAR (CVE-2025-6218, ZDI-25-409)"
+  },
+  "provenance": [
+    {
+      "src": "sources/42410551c54d2bbe-winrar-zdi.txt",
+      "author": "TrendAI Zero Day Initiative advisory ZDI-25-409 (CVE-2025-6218)",
+      "sha256": "42410551c54d2bbe5def3938d68f9381cd1fb42879db0d4d256c9735eee42cc7",
+      "corroborates": "the flaw in handling of file paths within archives, traversal to unintended directories, and the fixed release"
+    },
+    {
+      "src": "https://www.secpod.com/blog/archive-terror-dissecting-the-winrar-cve-2025-6218-exploit-apt-c-08s-stealth-move/",
+      "author": "SecPod research on CVE-2025-6218 and APT-C-08",
+      "sha256": "",
+      "corroborates": "independent exploitation analysis of the traversal-to-startup-folder chain"
+    },
+    {
+      "src": "https://www.win-rar.com/singlenewsview.html?&tx_ttnews%5Btt_news%5D=276",
+      "author": "RARLAB (vendor advisory)",
+      "corroborates": "fixed version"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-6218 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-22; directory traversal RCE"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-12-09; EPSS 0.906"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

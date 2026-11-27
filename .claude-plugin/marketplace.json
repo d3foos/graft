@@ -1,0 +1,34 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "graft",
+  "owner": {
+    "name": "Abdulrahman Almuhairi",
+    "url": "https://github.com/d3foos"
+  },
+  "metadata": {
+    "description": "GRAFT — offline technique-transfer library and Agent Skill by Abdulrahman Almuhairi.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "graft",
+      "source": "./",
+      "description": "Offline technique-transfer library for security research: slot-parameterised vulnerability mechanisms, execution-verified sink equivalence tables, trust gating, and negative-results ledger.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Abdulrahman Almuhairi",
+        "url": "https://github.com/d3foos"
+      },
+      "homepage": "https://github.com/d3foos/graft",
+      "repository": "https://github.com/d3foos/graft.git",
+      "license": "AGPL-3.0-or-later",
+      "category": "security",
+      "keywords": [
+        "security",
+        "vulnerability-research",
+        "technique-transfer",
+        "offline"
+      ]
+    }
+  ]
+}

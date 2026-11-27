@@ -1,0 +1,45 @@
+{
+  "family": "sink.http.request",
+  "effect": "NET_CONNECT",
+  "rev": 2,
+  "note": "Server-side outbound fetch keyed on input. The finding is usually not 'it fetches a URL' but 'the GUARD is bypassable' (redirect TOCTOU, DNS rebind, absolute-URL injection, parser confusion). Executed cells here verify the URL-parser confusion semantics that make those bypasses work.",
+  "cells": {
+    "python": {
+      "sinks": [{"name": "requests.*"}, {"name": "urllib.request.urlopen"}],
+      "patterns": ["requests\\.(get|post)", "urlopen", "urllib\\.request"],
+      "verified": {"how": "executed", "test": "tests/equiv/py_urlparse_confusion.py", "what": "urlsplit('http://allowed@evil/x').hostname == 'evil' — the userinfo trick a guard may parse differently than the client connects", "date": "2026-11-20", "box": "python 3.12.3"}
+    },
+    "node": {
+      "sinks": [{"name": "fetch / axios / got"}],
+      "patterns": ["axios", "fetch\\s*\\(", "require\\(['\"]got", "import.*got"],
+      "verified": {"how": "executed", "test": "tests/equiv/node_url_confusion.js", "what": "new URL('http://allowed@evil/x').host === 'evil'", "date": "2026-11-20", "box": "node v24.21.0"}
+    },
+    "ruby": {
+      "sinks": [{"name": "Net::HTTP"}, {"name": "open-uri (Kernel#open)"}],
+      "patterns": ["Net::HTTP", "open-uri", "URI\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/ruby_url_confusion.rb", "what": "URI('http://allowed@evil/x').host == 'evil'", "date": "2026-11-20", "box": "ruby 3.2.3"}
+    },
+    "php": {
+      "sinks": [{"name": "curl_exec"}, {"name": "file_get_contents(http…)"}, {"name": "Guzzle"}],
+      "patterns": ["curl_exec", "file_get_contents\\s*\\(\\s*\\$", "Guzzle"],
+      "verified": {"how": "documented", "source": "PHP docs (curl ext present; no live outbound in offline box)", "needs_local_verification": true}
+    },
+    "java": {
+      "sinks": [{"name": "URL.openConnection"}, {"name": "HttpClient"}],
+      "patterns": ["openConnection", "HttpClient"],
+      "verified": {"how": "documented", "source": "JDK docs", "needs_local_verification": true}
+    },
+    "dotnet": {
+      "sinks": [{"name": "HttpClient"}, {"name": "WebRequest"}],
+      "patterns": ["HttpClient", "WebRequest"],
+      "verified": {"how": "documented", "source": ".NET docs", "needs_local_verification": true}
+    },
+    "go": {
+      "sinks": [{"name": "http.Get/Post"}, {"name": "http.NewRequest"}],
+      "patterns": ["http\\.(Get|Post)", "http\\.NewRequest"],
+      "verified": {"how": "documented", "source": "net/http docs", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["guard-vs-client parser disagreement is the bypass class — verify what each layer sees for userinfo/backslash/bracket/alt-IP forms", "redirect following without per-hop revalidation defeats first-hop checks", "DNS rebinding defeats resolve-then-check unless the resolved IP is pinned"],
+  "non_transfers": ["no outbound fetch in the app", "egress-filtered environments (the bug exists, the impact does not)"]
+}

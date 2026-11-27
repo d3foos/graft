@@ -1,0 +1,186 @@
+{
+ "id": "T-0096",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The output buffer is sized for the input, but the transformation can expand a character and write more bytes than it read",
+ "index_line": "T-0096 · MEM_WRITE · one-byte heap overflow in Ruby case conversion: ß→SS consumes the +20 slack · c · corroborated",
+ "langs": {
+  "origin": "c",
+  "transferable": [
+   "c",
+   "cpp",
+   "ruby",
+   "python",
+   "php",
+   "java",
+   "node"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-787",
+   "CWE-131",
+   "CWE-193"
+  ],
+  "capec": [],
+  "effect": "MEM_WRITE",
+  "stage": "impact"
+ },
+ "invariant_violated": "The converter assumed that case conversion preserves size: allocate the input length plus some slack, then one output byte per input byte. Character expansion breaks that — a single character can legitimately map to two — and the loop's per-iteration room check only ever reserved room for one.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an attacker-supplied string in a legacy single-byte encoding (ISO-8859-x, Windows-125x) reaches upcase/swapcase/downcase(:fold)/casecmp?"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the case-conversion loop walks the string and writes converted characters"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "a character with no uppercase form in that encoding (eszett) expands to two bytes (SS)"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "the loop's guard only ensures room for one byte, so the second byte is written unchecked; the buffer is input length + 20 and each expansion consumes one byte of slack"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "21 such characters write one byte past the buffer — a controlled 0x73 into the adjacent heap object, corrupting a length/pointer reachable for code execution"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "a request-supplied string in a legacy encoding that the application upcases/folds (headers, params, filenames)"
+  },
+  "sink.memory.copy": {
+   "value": "the case-conversion write loop"
+  },
+  "size.length": {
+   "value": "the output buffer sized as input length + 20, and the per-iteration 'room for one byte' check"
+  },
+  "encoding.string": {
+   "value": "single-byte encodings whose case mapping expands one character into two"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the Ruby build predates 3.3.14 / 3.4.13 / 4.0.10",
+   "check": {
+    "kind": "shell",
+    "spec": "ruby -v 2>/dev/null | head -1"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "application code case-converts strings that arrive in a legacy encoding",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "upcase|swapcase|downcase|casecmp"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "input",
+   "expr": "the input can carry 0xDF (eszett) bytes in a single-byte encoding",
+   "check": {
+    "kind": "shell",
+    "spec": "printf 'probe: send 21 x \\xDF in ISO-8859-1/Windows-1252 then trigger case conversion\\n'"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a heap-corruption crash after case-converting a string containing 21+ eszett characters",
+   "a controlled single byte written past a string buffer, visible as a corrupted adjacent object"
+  ],
+  "failure_like": [
+   "the build is patched to reserve expansion room or to check each byte",
+   "UTF-8-only input paths (the expansion does not apply the same way)"
+  ],
+  "false_positive": [
+   "an encoding error is not this bug — require the specific expansion path and heap effect",
+   "a crash on invalid byte sequences may be the regexp CVEs from the same advisory batch, not this one"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any text transform that can expand: case folding, transliteration, entity escaping, URL/percent encoding",
+   "the slack constant (+20) is the entire safety margin, so the number of expansions needed is tiny",
+   "single-byte legacy encodings are where the expansion rules are surprising"
+  ],
+  "non_transfers": [
+   "converters that grow the buffer or pre-compute the expanded length",
+   "languages whose case mapping is size-stable for the encodings in use"
+  ],
+  "confidence": {
+   "c": 0.85,
+   "cpp": 0.7,
+   "ruby": 0.6,
+   "python": 0.6,
+   "php": 0.55,
+   "java": 0.5,
+   "node": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0010",
+  "T-0095"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Ruby < 3.3.14 / 3.4.13 / 4.0.10, string case conversion (CVE-2026-132825, Ruby2Shell)"
+ },
+ "provenance": [
+  {
+   "src": "sources/020f56a018894d20-ruby2shell-verialabs.txt",
+   "author": "Veria Labs",
+   "sha256": "020f56a018894d20a340b36c35a9d71aa082f5e269eb7c2a31e8bae9abb3305f",
+   "corroborates": "CVE-2026-132825 Ruby2Shell: most single-byte encodings have no capital eszett; upcasing writes two bytes (SS) into a loop that checked room for one; the output buffer is input length + 20 bytes and each eszett adds a byte, so 21 of them overflow by one byte (0x73); the same loop exists in several ISO-8859/Windows-125x upcase, swapcase, downcase(:fold) and casecmp?"
+  },
+  {
+   "src": "sources/9d53584a9cfaf505-ruby-security-advisory.txt",
+   "author": "Ruby core team (security advisory)",
+   "sha256": "9d53584a9cfaf505383971cf2676e3beed414b0e2301a3d9625073027319eac2",
+   "corroborates": "GHSA-34m4-m9fh-gqp5: one-byte heap-based buffer overflow in case conversion of strings; changing the case of a crafted string may allow remote code execution; fixed in Ruby 4.0.10, 3.4.13, 3.3.14"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-132825 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-132825 description (heap-based buffer overflow during case conversion; one byte outside a buffer)"
+  },
+  {
+   "src": "https://www.ruby-lang.org/en/news/2026/11/18/multiple-vulnerabilities-in-regexp-and-string/",
+   "author": "Ruby core team",
+   "sha256": "",
+   "corroborates": "advisory batch including GHSA-34m4-m9fh-gqp5 and the RCE PoC statement"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

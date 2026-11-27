@@ -1,0 +1,197 @@
+{
+  "id": "T-0051",
+  "schema_version": 4,
+  "record_version": 3,
+  "title": "A token check that only runs when one authentication type is configured: every other configuration has none",
+  "index_line": "T-0051 \u00b7 EXEC \u00b7 `if (authType == UserName) verify(token)` on a machine-to-machine SOAP endpoint, then task-driven file write \u00b7 c# \u00b7 corroborated",
+  "langs": {
+    "origin": "dotnet",
+    "transferable": [
+      "dotnet",
+      "java",
+      "php",
+      "python",
+      "node"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-287",
+      "CWE-863",
+      "CWE-434"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A conditional guard is assumed to be a guard. `if (authType == UserName) { VerifyToken(token); }` reads as 'authenticate machine callers when they use the username scheme' and is written as an *improvement* \u2014 but it makes verification a property of configuration. In every deployment where the other scheme is in use, the endpoint that was meant to be authenticated is simply open.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker posts a SOAP request to the staging/synchronisation endpoint that replicas use to exchange content",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the request body is deserialised into a synchronisation task and handed to the task runner",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the token check is wrapped in a configuration comparison, so it executes only for one of the supported authentication types",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "for any other configuration the verification branch never runs and the request proceeds unauthenticated, straight into the task runner",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 5,
+      "does": "the task's parameters drive a file write into a media/staging location under the application root",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 6,
+      "does": "the written handler is requested and executes in the application's context",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "the SOAP envelope \u2014 the interesting part is the task payload inside it, not the action header"
+    },
+    "guard.none": {
+      "value": "the token check exists in the source and is skipped by configuration; the guard is conditional, which is the same as absent"
+    },
+    "sink.file.write": {
+      "value": "the task runner's media/staging write, which accepts a path and a type from the task data"
+    },
+    "encoding.string": {
+      "value": "SOAP namespaces and the task XML shape; the request has to look like a legitimate replica to reach the runner"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a machine-to-machine sync/staging endpoint is present and enabled",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "SyncServer|Staging|\\.asmx|ProcessSynchronizationTask|replica"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "its verification is conditional on a configured authentication type",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "if *\\(.*AuthenticationType.*==|ServerAuthenticationEnum\\.|VerifyToken\\("
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the endpoint answers without a session in the deployed configuration",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -X POST https://HOST/CMSPages/Staging/SyncServer.asmx -H 'Content-Type: text/xml' -d '<x/>'"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an unauthenticated SOAP POST reaches the task runner \u2014 the response is a task-level error, not an auth error",
+      "a file appears under the staging/media directory with content from the task payload",
+      "requesting the written file returns executed output rather than source"
+    ],
+    "failure_like": [
+      "the endpoint is disabled, or verification runs before the branch rather than inside it",
+      "the task runner validates the path and type against an allow-list"
+    ],
+    "false_positive": [
+      "an auth error from the endpoint \u2014 that is the guard running; the bug needs the other configuration",
+      "a 200 with an empty SOAP fault: the endpoint answered, but check whether the runner was reached"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "grep for guards inside conditionals: `if (config == X) verify()` is a missing guard in every other config, and it looks like diligence in review",
+      "machine-to-machine endpoints age badly \u2014 they were written for a trusted peer and the trust assumption outlived the network it was written for",
+      "the write half is usually an upload or media handler that trusts the task data; the two defects compose into pre-auth RCE",
+      "distinct from T-0046 (endpoint never had a check) and T-0045 (the check is applied to the wrong object): here the check exists but is conditional"
+    ],
+    "non_transfers": [
+      "endpoints that verify before branching on configuration",
+      "deployments where the sync service is off (the vendor's default) \u2014 establish that the endpoint is live before claiming reachability"
+    ],
+    "confidence": {
+      "dotnet": 0.85,
+      "java": 0.75,
+      "php": 0.75,
+      "python": 0.7,
+      "node": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0046",
+    "T-0030"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Kentico Xperience CMS staging service (CVE-2025-2749 / WT-2025-0006 + WT-2025-0007)"
+  },
+  "provenance": [
+    {
+      "src": "sources/8b113de2583ebb52-kentico-watchtowr.txt",
+      "author": "watchTowr Labs Kentico Xperience research (WT-2025-0006 / 0007 / 0011)",
+      "sha256": "8b113de2583ebb528361ea84b545d352d2a529dca210416250dfa681d4b8c0bc",
+      "corroborates": "the SyncServer endpoint, the `if (ServerAuthenticationType(...) == UserName) { VerifyToken(token); }` branch, and the staging-upload RCE"
+    },
+    {
+      "src": "https://www.vulncheck.com/advisories/kentico-xperience-staging-media-file-upload-authenticated-rce",
+      "author": "VulnCheck advisory",
+      "corroborates": "independent advisory record for the staging media file upload RCE"
+    },
+    {
+      "src": "https://devnet.kentico.com/download/hotfixes",
+      "author": "Kentico (vendor hotfix page)",
+      "corroborates": "fixed builds and affected range"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-2749 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-22 / CWE-434; authenticated RCE via staging media file upload"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-04-20; EPSS 0.040 \u2014 low EPSS, on KEV anyway"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

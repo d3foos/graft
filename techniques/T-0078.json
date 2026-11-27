@@ -1,0 +1,189 @@
+{
+ "id": "T-0078",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "Omitting the password element leaves the verifier in its default 'no verification option' state, and that switch case returns success",
+ "index_line": "T-0078 · AUTH_DECISION · WS-Security token without a Password element: parser default SendNone reaches the verifier's default branch · dotnet · corroborated",
+ "langs": {
+  "origin": "dotnet",
+  "transferable": [
+   "dotnet",
+   "java",
+   "php",
+   "python",
+   "node",
+   "ruby"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-288",
+   "CWE-636",
+   "CWE-287"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "The verifier assumed every token would name a password option; when the element is absent the option keeps its constructor default (SendNone) and the verification switch's default branch returns without comparing anything — so 'no credential supplied' was executed as 'no credential required'.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a SOAP request carries a UsernameToken with a Username but no <wsse:Password> element at all"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "UsernameToken.LoadXml never sets _passwordOption because there is no Password node, leaving the default SendNone"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "VerifyPassword switches on the option; SendNone falls to the default branch, which returns without any comparison"
+  },
+  {
+   "n": 4,
+   "primitive": "BYPASS",
+   "bypasses": "guard.signature",
+   "does": "the token is accepted because verification was skipped, not because a credential matched"
+  },
+  {
+   "n": 5,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the caller marks the token authenticated and attaches the resulting identity"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "the SOAP body's stagingTaskData is deserialized with SoapFormatter as the configured staging user"
+  }
+ ],
+ "slots": {
+  "source.http.body": {
+   "value": "a SOAP envelope whose UsernameToken omits the Password element entirely"
+  },
+  "guard.signature": {
+   "value": "the password-verification routine that returns success on its SendNone default branch"
+  },
+  "sink.deser.native": {
+   "value": "stagingTaskData deserialized by SoapFormatter once the token is accepted"
+  },
+  "guard.pipeline": {
+   "value": "the XML-security pipeline that decides the password option from the message itself instead of from policy"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the staging SOAP endpoint answers unauthenticated",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -X POST http://HOST/CMSPages/Staging/SyncServer.asmx -H 'Content-Type: text/xml' --data '<x/>'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the deployment uses the WSE3 UsernameTokenManager path with user-name/password staging authentication",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "UsernameTokenManager|PasswordOption|VerifyPassword|ProcessSynchronizationTaskData"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "input",
+   "expr": "a token with no Password element is accepted where one with a wrong password is rejected",
+   "check": {
+    "kind": "shell",
+    "spec": "printf '%s' '<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Header><wsse:Security xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\"><wsse:UsernameToken><wsse:Username>probe</wsse:Username></wsse:UsernameToken></wsse:Security></soap:Header><soap:Body><ProcessSynchronizationTaskData xmlns=\"http://localhost/SyncWebService/SyncServer\"><stagingTaskData>x</stagingTaskData></ProcessSynchronizationTaskData></soap:Body></soap:Envelope>' | curl -s -X POST http://HOST/CMSPages/Staging/SyncServer.asmx -H 'Content-Type: text/xml' --data-binary @- | head -c 300"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a Password-less UsernameToken returns a staging-processing result instead of a security fault",
+   "the response differs from the same request carrying a wrong Password element"
+  ],
+  "failure_like": [
+   "the library rejects tokens without a password ('must contain password')",
+   "the service is configured for X.509 authentication"
+  ],
+  "false_positive": [
+   "a fault about a missing username token means the token was parsed but the user did not resolve — not this bug",
+   "a 200 from the .asmx page itself is the WSDL/landing page, not authentication success"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "message-driven verification options are a recurring pattern: the attacker chooses the policy by choosing the message shape",
+   "any 'if no credential present, skip the check' branch in an auth library",
+   "default enum members in security switches are the concrete tell"
+  ],
+  "non_transfers": [
+   "verifiers that require a password element as a schema-validated mandatory field",
+   "policy that fixes the password option server-side"
+  ],
+  "confidence": {
+   "dotnet": 0.9,
+   "java": 0.6,
+   "php": 0.5,
+   "python": 0.5,
+   "node": 0.5,
+   "ruby": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0077"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Kentico Xperience <= 13.0.178, Staging Sync Server with the 'None' password type (CVE-2025-2747)"
+ },
+ "provenance": [
+  {
+   "src": "sources/8b113de2583ebb52-kentico-watchtowr.txt",
+   "author": "watchTowr Labs",
+   "sha256": "8b113de2583ebb528361ea84b545d352d2a529dca210416250dfa681d4b8c0bc",
+   "corroborates": "CVE-2025-2747: UsernameToken.LoadXml leaves _passwordOption at its default PasswordOption.SendNone when no <wsse:Password> element is present; VerifyPassword switches on that option and the default branch returns without comparing anything, so a password-less token authenticates"
+  },
+  {
+   "src": "sources/2557a77b2391146b-kentico2747-vulncheck.txt",
+   "author": "VulnCheck",
+   "sha256": "2557a77b2391146b1c3bab736ebe616d1ae9735ca224957756a3d231b06bed08",
+   "corroborates": "independent advisory: Kentico Xperience Staging Sync Server \"None\" password-type authentication bypass (CWE-288), affected through 13.0.178"
+  },
+  {
+   "src": "MITRE/NVD CVE-2025-2747 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2025-2747 description and CWE"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2025-10-20"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

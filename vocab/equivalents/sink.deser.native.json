@@ -1,0 +1,50 @@
+{
+  "family": "sink.deser.native",
+  "effect": "EXEC",
+  "rev": 2,
+  "note": "Native object-stream deserializers: the decoder instantiates attacker-named types. Gadget availability is a target fact (classpath/autoloader/vendor tree), never an assumption.",
+  "cells": {
+    "php": {
+      "sinks": [{"name": "unserialize(...)"}, {"name": "phar:// stream ops", "gates": ["any file op on a phar:// path deserializes metadata — no unserialize call needed; polyglot .jpg upload is the usual carrier"]}],
+      "patterns": ["unserialize\\s*\\(", "phar://"],
+      "verified": {"how": "executed", "test": "tests/equiv/php_deser_baseline.php", "what": "unserialize instantiates stdClass from O:8: blob; garbage returns false with offset error", "date": "2026-11-20", "box": "php 8.3.6"}
+    },
+    "python": {
+      "sinks": [
+        {"name": "pickle.loads(...)"},
+        {"name": "yaml.load without SafeLoader", "gates": ["PyYAML >=5.1 requires Loader arg; only SafeLoader is inert"]},
+        {"name": "jsonpickle"},
+        {"name": "torch.load", "gates": ["weights_only default flipped in torch 2.6"]}
+      ],
+      "patterns": ["pickle\\.loads", "yaml\\.load\\s*\\(", "jsonpickle", "torch\\.load"],
+      "verified": {"how": "executed", "test": "tests/equiv/py_deser_pickle.py", "what": "pickle executes __reduce__ side effect on loads (echo marker)", "date": "2026-11-20", "box": "python 3.12.3"}
+    },
+    "ruby": {
+      "sinks": [{"name": "Marshal.load(...)"}, {"name": "YAML.unsafe_load", "gates": ["Ruby >=3.1 renamed load → unsafe_load for this reason"]}],
+      "patterns": ["Marshal\\.load", "YAML\\.unsafe_load", "YAML\\.load\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/ruby_deser_marshal.rb", "what": "Marshal round-trip decodes attacker-shaped bytes; gadget chains require reachable classes (hazard, not verified here)", "date": "2026-11-20", "box": "ruby 3.2.3"}
+    },
+    "node": {
+      "sinks": [{"name": "node-serialize", "gates": ["IIFE-on-eval deserialization"]}, {"name": "funcster"}],
+      "patterns": ["node-serialize", "funcster", "serialize\\.unserialize"],
+      "verified": {"how": "documented", "source": "package docs (no npm registry access offline)", "needs_local_verification": true}
+    },
+    "java": {
+      "sinks": [
+        {"name": "ObjectInputStream.readObject", "gates": ["magic rO0AB; ysoserial gadget chains matched to classpath; URLDNS = gadget-free blind detection"]},
+        {"name": "Jackson enableDefaultTyping / @JsonTypeInfo"},
+        {"name": "Fastjson autoType", "gates": ["autoType bypasses documented below 1.2.68"]},
+        {"name": "XStream"}
+      ],
+      "patterns": ["ObjectInputStream", "readObject\\s*\\(", "enableDefaultTyping", "JsonTypeInfo", "autoType", "XStream"],
+      "verified": {"how": "documented", "source": "ysoserial/Jackson/Fastjson advisories", "needs_local_verification": true}
+    },
+    "dotnet": {
+      "sinks": [{"name": "BinaryFormatter / SoapFormatter / LosFormatter"}, {"name": "Json.NET TypeNameHandling.Auto"}, {"name": "__VIEWSTATE", "gates": ["exploitable when MAC key unknown-protection is absent"]}],
+      "patterns": ["BinaryFormatter", "TypeNameHandling", "__VIEWSTATE", "LosFormatter", "SoapFormatter"],
+      "verified": {"how": "documented", "source": "ysoserial.net / MS BinaryFormatter security guidance", "needs_local_verification": true}
+    }
+  },
+  "hazards": ["gadget chains are per-framework (phpggc Laravel/Monolog vs ysoserial CommonsCollections vs pickle __reduce__) — enumerate the target's dependency tree first", "blind first: URLDNS/DNS canary proves the decoder ran without any gadget"],
+  "non_transfers": ["go encoding/gob — no method dispatch from stream data", "rust serde — no attacker-named type instantiation in safe code", "plain JSON without type tags — nothing to instantiate"]
+}

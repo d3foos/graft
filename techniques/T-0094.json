@@ -1,0 +1,175 @@
+{
+ "id": "T-0094",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The reclaim policy reads protocol state to decide a connection is idle, but the request using it has moved to the upstream",
+ "index_line": "T-0094 · MEM_WRITE · HTTP/2 connection reclaimed under slot pressure while its request is proxying upstream → UAF · c · corroborated",
+ "langs": {
+  "origin": "c",
+  "transferable": [
+   "c",
+   "cpp",
+   "go",
+   "rust",
+   "java"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-416",
+   "CWE-911",
+   "CWE-772"
+  ],
+  "capec": [],
+  "effect": "MEM_WRITE",
+  "stage": "impact"
+ },
+ "invariant_violated": "Connection reclamation assumed the protocol state is the whole truth about liveness: a connection with no active streams is idle and may be freed. But a request that has opened an upstream connection is exactly when the client-side connection must stay alive — its memory is still referenced by the upstream code path, which the reclaim policy never consults.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated HTTP/2 request is served through a proxy_pass, so nginx opens an upstream connection"
+  },
+  {
+   "n": 2,
+   "primitive": "COMPARE",
+   "does": "under worker_connections pressure, the reclaim policy marks connections reusable from protocol state (no active streams)"
+  },
+  {
+   "n": 3,
+   "primitive": "WRITE",
+   "does": "nginx closes the request's own HTTP/2 connection and frees its memory while the upstream request is in flight"
+  },
+  {
+   "n": 4,
+   "primitive": "READ",
+   "does": "the upstream completion path continues to dereference the freed connection structure"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "attacker-shaped heap reuse places controlled data where the stale pointer is used, turning the use-after-free into control-flow hijack"
+  }
+ ],
+ "slots": {
+  "source.protocol": {
+   "value": "HTTP/2 client connection multiplexed with a proxy_pass upstream request"
+  },
+  "lifetime.object": {
+   "value": "the freed HTTP/2 connection structure still referenced by upstream processing"
+  },
+  "sync.window": {
+   "value": "the worker's finite connection-slot budget (worker_connections) whose pressure triggers reclamation"
+  },
+  "guard.none": {
+   "value": "no check that the connection is unreferenced by an in-flight upstream request before freeing"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "HTTP/2 is enabled and requests are proxied to an upstream",
+   "check": {
+    "kind": "shell",
+    "spec": "grep -rE 'proxy_pass|http2' /etc/nginx 2>/dev/null | head -6"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build is in the affected range (1.19.7 through 1.31.8)",
+   "check": {
+    "kind": "shell",
+    "spec": "nginx -v 2>&1 | head -1"
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the worker reuses connections under slot pressure (reachable by exhausting worker_connections)",
+   "check": {
+    "kind": "shell",
+    "spec": "grep -E 'worker_connections' /etc/nginx/nginx.conf 2>/dev/null; printf 'pressure = open many concurrent TLS connections from one source\\n'"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "worker crash in the upstream completion path after many short-lived HTTP/2 connections from one source",
+   "response data from another request's freed structure, or controlled control-flow on a shaped heap"
+  ],
+  "failure_like": [
+   "HTTP/2 disabled, or no upstream proxying configured",
+   "the build keeps the connection referenced until upstream completion"
+  ],
+  "false_positive": [
+   "worker crashes under load have many causes — require the pattern of many short TLS connections plus HTTP/2 proxying and the crash site in the connection-reclaim path",
+   "connection statistics climbing alone is not exploitation"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any multiplexed server that reclaims resources from protocol state while a second subsystem still holds a reference",
+   "slot/limit pressure is the lever: reclamation runs exactly when the attacker can create contention",
+   "the freeing subsystem and the using subsystem each believe they own the lifetime"
+  ],
+  "non_transfers": [
+   "reference-counted connection objects where the upstream holds a counted reference",
+   "servers without HTTP/2 or without proxying"
+  ],
+  "confidence": {
+   "c": 0.85,
+   "cpp": 0.7,
+   "go": 0.6,
+   "rust": 0.6,
+   "java": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0009",
+  "T-0093"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "nginx HTTP/2 connection reclamation with upstream proxying, 1.19.7-1.31.8 (CVE-2026-123633, nginx2root)"
+ },
+ "provenance": [
+  {
+   "src": "sources/54b52a689ff9a95d-nginx-wiz-http2.txt",
+   "author": "Wiz Research",
+   "sha256": "54b52a689ff9a95d80c874c4a50859b285108fb8e7d1ff15947c151b067f92ae",
+   "corroborates": "CVE-2026-123633: HTTP/2 connection use-after-free — a connection's memory is freed while a request still needs it, affecting reverse-proxy processing when available connection slots run low; demonstrated RCE with an ASLR bypass; reported 2026-10-21"
+  },
+  {
+   "src": "sources/e8514811afd9f789-nginx-xint-nginx2root.txt",
+   "author": "Xint (nginx2root)",
+   "sha256": "e8514811afd9f7890238b8a3ffebeb2df4393f40452f603cb2f29ef021155d3c",
+   "corroborates": "CVE-2026-123633: a use-after-free caused by an active HTTP/2 connection remaining eligible for draining — when a request opens an upstream connection, nginx can close the request's own HTTP/2 connection and free its memory while upstream code keeps accessing it; requires an upstream (affects 1.19.7+)"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-123633 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-123633 description (HTTP/2 UAF in the worker when proxying client requests to a backend)"
+  },
+  {
+   "src": "https://cert-portal.siemens.com/productcert/html/ssa-935812.html",
+   "author": "Siemens ProductCERT",
+   "sha256": "",
+   "corroborates": "affected product matrix for the nginx2root CVEs"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

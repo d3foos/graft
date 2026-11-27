@@ -1,0 +1,213 @@
+{
+  "id": "T-0034",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "An escaper that reallocates has two jobs \u2014 escape and terminate \u2014 and missing the second leaks the heap tail into the command",
+  "index_line": "T-0034 \u00b7 EXEC \u00b7 escape routine mallocs, escapes quotes, never NUL-terminates: the shell reads the rest of the heap \u00b7 c/perl/rust/go \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "perl",
+      "rust",
+      "go"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-170",
+      "CWE-665",
+      "CWE-78"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A quoting routine is assumed to be safe because it escapes the dangerous character. But it returns a *new buffer*, and a new buffer has to be terminated \u2014 an unterminated string is not a shortened string, it is the escaped prefix followed by whatever the allocator happened to leave there, all of which the shell will parse.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated request supplies a value that a backend will embed in a single-quoted shell command",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the quoting helper allocates a fresh buffer and walks the input, copying characters and expanding each quote into the escaped form",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 3,
+      "does": "it writes the escaped bytes into the new buffer and returns it \u2014 without writing a terminator",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 4,
+      "does": "the caller concatenates that C string into a command line, so everything after the return value to the first zero byte is included",
+      "primitive": "READ"
+    },
+    {
+      "n": 5,
+      "does": "the attacker shapes the adjacent heap (several requests, sized allocations) so the trailing bytes are their own text, and the extra quote they could not otherwise inject now appears",
+      "primitive": "BYPASS",
+      "bypasses": "guard.escaping"
+    },
+    {
+      "n": 6,
+      "does": "the shell executes the assembled command as the appliance's service account",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "any API field that a backend will place inside a quoted command; the API being enabled is the whole exposure"
+    },
+    "sink.exec.shell": {
+      "value": "the command string that receives the escaped (unterminated) buffer"
+    },
+    "guard.escaping": {
+      "value": "the quote-escaping helper \u2014 it is the guard, and it is what breaks: correct escaping, missing terminator"
+    },
+    "size.length": {
+      "value": "the allocation is sized from the input length, and the unterminated tail is read until the next zero byte, which the attacker controls by heap shaping"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a quoting routine that returns a heap buffer rather than escaping in place",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "escape_quotes|escape_quote|shell_escape|quote_string",
+            "malloc\\s*\\(.*strlen|calloc\\(1*"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the return value is consumed as a C string (strcat/snprintf/system) with no length carried alongside",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "strcat\\s*\\(|snprintf\\s*\\(|system\\s*\\(|popen\\s*\\("
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the path is reachable before authentication (the API is enabled and the command is built for a request that has no session)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' https://HOST/access/  # then repeat the request with no credentials"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the patch for the target version touches only the quoting helper \u2014 a one-function diff is the tell",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "diff the fixed build's access binary against the previous release; a single changed function around the quoting helper confirms the class"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the command's side effect appears with no authentication and no valid session",
+      "exploitation needs more than one request (heap shaping) \u2014 a single-shot probe usually looks negative",
+      "the injected metacharacter does not have to be in the input at all; it is in the leftover heap"
+    ],
+    "failure_like": [
+      "the helper terminates the buffer, or carries an explicit length to the caller",
+      "the value reaches the command through argv (no shell) \u2014 then quote escaping is irrelevant"
+    ],
+    "false_positive": [
+      "an error mentioning the quoting function because the input was rejected \u2014 that is the guard working",
+      "a 200 from the API with no command side effect: reachability, not exploitation",
+      "assuming the single quote you sent was what escaped the context \u2014 check whether the injected byte was ever in your request"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "this is a guard that is *correct* at its stated job and broken at the job it also has; reviewing the escaping logic alone will pass it",
+      "one-function patch diffs on an appliance almost always mean a guard fix \u2014 start there rather than at the request parser",
+      "heap shaping makes this look flaky; failing once proves nothing. Repeat with size variations before concluding",
+      "CWE-170 (missing termination) is rarely in the CWE list a vendor publishes \u2014 they say 'command injection', which hides the real fix"
+    ],
+    "non_transfers": [
+      "languages with length-carrying strings where the caller cannot read past the value",
+      "shell-free invocation (argv), where an unterminated buffer cannot inject a metacharacter",
+      "helpers that escape in place without allocating"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.8,
+      "perl": 0.6,
+      "rust": 0.4,
+      "go": 0.4
+    }
+  },
+  "combines_with": [
+    "T-0005",
+    "T-0023"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "Progress Kemp LoadMaster GA 7.2.63.1 and earlier (CVE-2026-8037), fixed 7.2.63.2"
+  },
+  "provenance": [
+    {
+      "src": "sources/5f4e148b52837a48-loadmaster-watchtowr.txt",
+      "author": "watchTowr Labs (Sina Kheirkhah) patch-diff analysis",
+      "sha256": "5f4e148b52837a480f2832df6b0db26bd15a98df4e1cd2f338210d2ed81d3b97",
+      "corroborates": "the one-function diff, escape_quotes() before and after, the malloc without termination, and the heap-tail-to-shell argument"
+    },
+    {
+      "src": "https://www.esentire.com/security-advisories/progress-kemp-loadmaster-vulnerability-targeted-cve-2026-8037",
+      "author": "eSentire (independent threat research)",
+      "corroborates": "in-the-wild targeting and the exposure profile of internet-facing LoadMaster APIs"
+    },
+    {
+      "src": "https://community.progress.com/s/article/LoadMaster-Critical-Security-Bulletin-June-2026-CVE-2026-8037-CVE-2026-33691",
+      "author": "Progress Software (vendor advisory)",
+      "corroborates": "affected versions, the API-must-be-enabled condition, and the fixed release"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-8037 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-77, CVSS 3.1 9.8 AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H, unauthenticated"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-08-07; EPSS 0.998"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.87
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

@@ -1,0 +1,21 @@
+{
+  "name": "graft",
+  "displayName": "GRAFT",
+  "version": "1.0.0",
+  "description": "Offline technique-transfer library for security research: slot-parameterised vulnerability mechanisms, execution-verified sink equivalence tables, trust gating, and an append-only outcome ledger.",
+  "author": {
+    "name": "Abdulrahman Almuhairi",
+    "url": "https://github.com/d3foos"
+  },
+  "homepage": "https://github.com/d3foos/graft",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/d3foos/graft.git"
+  },
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Search GRAFT for EXEC techniques applicable to PHP and inspect their preconditions",
+    "Adapt T-0007 to a target Java codebase and list unknowns with cheapest verification oracles",
+    "Run GRAFT stats and verify-table to inspect trust tiers and equivalence-cell status"
+  ]
+}

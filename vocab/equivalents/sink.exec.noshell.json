@@ -1,0 +1,51 @@
+{
+  "family": "sink.exec.noshell",
+  "effect": "EXEC",
+  "shell_semantics": false,
+  "rev": 2,
+  "note": "Subprocess APIs WITHOUT a shell. The exploit class is argument injection: a value that becomes argv[0], a leading '-' flag, or a subcommand — not metacharacters. Rev 1 buried this in one EXEC row.",
+  "cells": {
+    "java": {
+      "sinks": [{"name": "Runtime.exec(String)", "gates": ["whitespace-tokenized, no shell: inject arguments, not metachars"]}, {"name": "ProcessBuilder"}],
+      "patterns": ["Runtime\\.getRuntime\\(\\)\\.exec", "ProcessBuilder"],
+      "verified": {"how": "documented", "source": "Java platform docs (Runtime.exec tokenization)", "needs_local_verification": true}
+    },
+    "dotnet": {
+      "sinks": [{"name": "Process.Start", "gates": ["UseShellExecute=false is the modern default — no shell"]}],
+      "patterns": ["Process\\.Start"],
+      "verified": {"how": "documented", "source": ".NET docs: ProcessStartInfo.UseShellExecute", "needs_local_verification": true}
+    },
+    "go": {
+      "sinks": [{"name": "os/exec.Cmd", "gates": ["no shell unless the command is explicitly sh -c"]}],
+      "patterns": ["exec\\.Command", "exec\\.CommandContext"],
+      "verified": {"how": "documented", "source": "Go os/exec docs", "needs_local_verification": true}
+    },
+    "rust": {
+      "sinks": [{"name": "std::process::Command", "gates": ["no shell"]}],
+      "patterns": ["Command::new", "std::process::Command"],
+      "verified": {"how": "documented", "source": "Rust std docs", "needs_local_verification": true}
+    },
+    "python": {
+      "sinks": [{"name": "subprocess.run/Popen([...]) argv form", "gates": ["metachars are literal; leading '-' becomes a flag"]}],
+      "patterns": ["subprocess\\.(run|call|check_output|Popen)\\s*\\(\\s*\\["],
+      "verified": {"how": "executed", "test": "tests/equiv/py_exec_noshell.py", "what": "argv form prints '&&' literally; no shell interpretation", "date": "2026-11-20", "box": "python 3.12.3"}
+    },
+    "node": {
+      "sinks": [{"name": "execFile/spawn without shell:true"}],
+      "patterns": ["execFile\\s*\\(", "spawn\\s*\\("],
+      "verified": {"how": "executed", "test": "tests/equiv/node_exec_noshell.js", "what": "spawn argv prints '&&' literally", "date": "2026-11-20", "box": "node v24.21.0"}
+    },
+    "php": {
+      "sinks": [{"name": "proc_open(array cmd, ...)", "gates": ["array form bypasses the shell — the oft-missed inverse of proc_open(string)"]}],
+      "patterns": ["proc_open\\s*\\(\\s*\\["],
+      "verified": {"how": "executed", "test": "tests/equiv/php_exec_noshell.php", "what": "proc_open array args: '; rm -rf' stays literal", "date": "2026-11-20", "box": "php 8.3.6"}
+    },
+    "ruby": {
+      "sinks": [{"name": "system(cmd, arg, …) multi-arg form"}, {"name": "Open3.*"}],
+      "patterns": ["Open3\\.", "Process\\.spawn", "\\bsystem\\s*\\(\\s*['\"][^'\"]+['\"]\\s*,"],
+      "verified": {"how": "executed", "test": "tests/equiv/ruby_exec_noshell.rb", "what": "Open3.capture2 argv form: '&&' literal", "date": "2026-11-20", "box": "ruby 3.2.3"}
+    }
+  },
+  "hazards": ["argument injection survives correct quoting — look for attacker values that become a flag ('-o', '--upload-pack', '-K') or argv[0]", "tool delegates (git, curl, ssh, ImageMagick) parse the injected flag themselves"],
+  "non_transfers": ["pure metachar payloads — dead on this family"]
+}

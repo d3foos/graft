@@ -1,0 +1,202 @@
+{
+  "id": "T-0042",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A credential check that accepts a token matching the expected shape instead of the expected value",
+  "index_line": "T-0042 \u00b7 AUTH_DECISION \u00b7 API accepts a random token in place of valid credentials, then one action field reaches a command \u00b7 c/any-API \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "php",
+      "python",
+      "node",
+      "ruby",
+      "java",
+      "dotnet"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-287",
+      "CWE-697"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "An authentication check is assumed to compare the presented credential with the stored one. When it instead compares a *property* of the credential \u2014 that a field exists, that the string is non-empty, that it parses as the expected token shape \u2014 then any value with that shape is a credential. The check looks like a comparison and behaves like a formality.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker reaches an API action endpoint that normally requires an authenticated session",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the request carries a token that is well-formed but random \u2014 it was never issued by the server",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the authentication step validates the token's presence/shape rather than its equality against an issued token, so the check passes",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the request is processed as an authenticated API call, and the action's parameters reach the server-side handler",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 5,
+      "does": "the action's parameters update a server-side object that is later consumed by an interpreter, giving command execution as the service account",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 6,
+      "does": "the attacker runs commands as SYSTEM, then drops a webshell and a miner for persistence",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.header": {
+      "value": "the API token/credential field \u2014 the payload is a random value of the right shape, or a token shape forged from public information"
+    },
+    "sink.exec.shell": {
+      "value": "the action's parameter that reaches an interpreter once the call is authenticated"
+    },
+    "guard.signature": {
+      "value": "the credential comparison itself: shape/presence vs equality against a stored secret. This is the guard that fails"
+    },
+    "oracle.error": {
+      "value": "the API's status codes distinguish 'bad shape' from 'accepted', which is enough to confirm the bypass without a valid token"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "an API action endpoint is exposed to the internet",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' https://HOST/rps/api/json/UpdateReceivers.do"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the endpoint's authentication accepts a token without proving it was issued",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "authenticate\\(|validate_?token|is_?valid|check_?token",
+            "strlen\\(.*token|token\\s*!=\\s*NULL"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "an action parameter reaches an interpreter once authenticated",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "system\\(|popen\\(|CreateProcess|ProcessBuilder|exec\\("
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a random token is accepted and the API returns a normal (non-auth) response",
+      "the same request with no token is rejected \u2014 so the check exists, it just does not compare",
+      "after the chain, a webshell and a miner appear on the host, with child processes spawned by the service binary"
+    ],
+    "failure_like": [
+      "the token is compared against an issued value (hash-compare), or the endpoint requires a session cookie"
+    ],
+    "false_positive": [
+      "an error page that mentions a token problem \u2014 that is the check working",
+      "unauthenticated *reachability* mistaken for bypass: the response must show the action was processed"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "audit the comparison, not the auth framework: 'is this token valid' is a different question from 'was this token issued'",
+      "these appliances chain auth bypass into RCE because their API actions are administrative by design \u2014 the second half is usually a plain field-to-interpreter path",
+      "the token may be derived from public data (hostname, install id); 'random' here means not checked, not unguessable",
+      "the exact comparison defect is not public for this CVE \u2014 treat the mechanism as 'shape/presence accepted' until you can read the binary"
+    ],
+    "non_transfers": [
+      "token stores that hash and compare, or sessions bound to a cookie/CSRF pair",
+      "APIs whose actions are all read-only"
+    ],
+    "confidence": {
+      "c": 0.7,
+      "php": 0.6,
+      "python": 0.6,
+      "node": 0.6,
+      "ruby": 0.6,
+      "java": 0.6,
+      "dotnet": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0034",
+    "T-0019"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Ahsay AhsayCBS <= 9.15.2.69 / 10.3.4.44, /rps/api/json/UpdateReceivers.do (CVE-2026-105133 + CVE-2026-105134 chain)"
+  },
+  "provenance": [
+    {
+      "src": "sources/78a22fcf62dbe78c-ahsay-huntress.txt",
+      "author": "Huntress threat research (AhsayCBS flaws)",
+      "sha256": "78a22fcf62dbe78c8b3a29fd169f448af6f799a5ae3a73b6d5392210d97498ee",
+      "corroborates": "the authentication bypass where a random token substitutes valid credentials, the chained RCE through UpdateReceivers.do as SYSTEM, and the observed post-exploitation (webshell, XMRig, Taskgmr.ps1)"
+    },
+    {
+      "src": "https://vuldb.com/cve/CVE-2026-105133",
+      "author": "VulDB (independent vulnerability database)",
+      "corroborates": "independent record of the improper-authentication entry"
+    },
+    {
+      "src": "https://www.ahsay.com/en/company/announcements/patch-cve-105133-105134-update",
+      "author": "Ahsay (vendor advisory)",
+      "corroborates": "affected versions and the fixed release"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-105133 / CVE-2026-105134 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-287 / CWE-77-78, CVSS 3.1 10.0 AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-10-14; EPSS 0.845 / 0.818"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.7
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

@@ -1,0 +1,171 @@
+{
+  "id": "T-0068",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A service that compiles user-supplied regexps into native executable patterns trusts the compiler's own arithmetic",
+  "index_line": "T-0068 \u00b7 MEM_WRITE \u00b7 CI-config regexps compile to native pcode; the repeat-count program-size arithmetic overflows the allocation and crafted bytecode takes over \u00b7 c \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "ruby",
+      "php",
+      "python"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-190",
+      "CWE-122"
+    ],
+    "effect": "MEM_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "The application treated Regexp.new as a safe pure function. Down in the engine, compilation is native memory work driven by attacker-sized arithmetic \u2014 and an integer overflow in the compiled-pattern's program size let user input allocate far too little and write far too much.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated CI lint request (or a committed CI configuration) carries a crafted regexp with a huge bounded repeat of a compile-heavy subexpression",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the engine compiles the pattern into native bytecode; the repeat-expansion program-size arithmetic overflows (signed multiplication on the repeat count)",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the overflowed size under-allocates the compiled program and the compiler's writes run past it, corrupting engine memory with attacker-shaped bytecode",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 4,
+      "does": "crafted bytecode stages take over: the public exploit repeats a 37,151-byte lookbehind 57,805 times and drives execution into a system() gadget reached from the engine's crash reporter",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "the CI lint / CI configuration regexp \u2014 the lint surface needs no valid user (CVSS 10.0 AV:N/PR:N)"
+    },
+    "guard.none": {
+      "value": "insufficient regular expression validation: no pre-compilation bound on pattern size or repeat expansion"
+    },
+    "sink.memory.copy": {
+      "value": "the engine's compiled-program allocation and fill, sized by overflowed arithmetic"
+    },
+    "size.length": {
+      "value": "the repeat count times per-unit program size \u2014 attacker-chosen operands to the overflowing multiplication"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "the target ships an unpatched engine (GitLab CE/EE 19.2<19.2.8, 19.3<19.3.5, 19.4<19.4.2 on Ruby without the program-size patch)",
+      "check": {
+        "kind": "shell",
+        "spec": "ruby -v 2>/dev/null; curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/users/sign_in"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the compile path still overflows on bounded-repeat patterns (patched engines check the expansion with division and reject oversized programs)",
+      "check": {
+        "kind": "shell",
+        "spec": "ruby -e 'begin; Regexp.new(\"(a?){60000}\"); puts \"compiled\"; rescue => e; puts e.class; end' 2>&1 | head -2"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the attacker can submit a pattern to any compile surface (lint API, CI config push)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/users/sign_in"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the native worker crashes on the crafted pattern (the vendor ships detection for 'Onigmo native worker crash')",
+      "controlled execution: the published module drives crafted bytecode into a system() call and opens a session as the GitLab service user"
+    ],
+    "failure_like": [
+      "patched engine (Ruby 4.0.8 / 3.4.12 / 3.3.13, or GitLab 19.2.8/19.3.5/19.4.2) bounds the repeat expansion and rejects the oversized program"
+    ],
+    "false_positive": [
+      "ReDoS \u2014 slow matching \u2014 is match-time complexity, not this record; the overflow here is at compile time",
+      "a worker crash alone is a lead: the signature is a program size far beyond the allocation, not mere instability"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.memory.copy.json"
+    ],
+    "hazards": [
+      "every 'compile user regexps' feature \u2014 CI config validators, log filters, search-as-regex, rule editors \u2014 the engine is native memory work regardless of the host language",
+      "the same engine audit produced sibling CVEs: parse-failure double-free after alternation (CVE-2026-89078) and a second integer overflow (CVE-2026-93577 / CVE-2026-110264) \u2014 the class, not one bug",
+      "exploitation is layout-specific: bytecode offsets move per build; the public module fingerprints the exact release before selecting a native layout",
+      "the engine vendor released fixes for all embedders \u2014 patch the engine, not only the application"
+    ],
+    "non_transfers": [
+      "regexp engines that compile to bounded, checked IR and verify program size",
+      "deployments that never compile user-supplied patterns"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "ruby": 0.85,
+      "php": 0.6,
+      "python": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0026"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "GitLab CE/EE CI/CD regexp compiler on Ruby/Onigmo (CVE-2026-97229, CVSS 3.1 10.0 AV:N/AC:L/PR:N/UI:N/S:C)"
+  },
+  "provenance": [
+    {
+      "src": "sources/e90b88f6b3d4edd9-ruby-lang-regexp-fixes.txt",
+      "author": "Ruby project (k0kubun)",
+      "sha256": "e90b88f6b3d4edd99afc38fd81fdd2cf421c7167e02c93233cf72714ee228646",
+      "corroborates": "root cause from the engine vendor: specially crafted patterns corrupt memory while Ruby compiles them; integer overflow in the size of a compiled pattern behind CVE-2026-93577/97229; fixes in Ruby 4.0.8 / 3.4.12 / 3.3.13 with the program-size check applied via division"
+    },
+    {
+      "src": "sources/bc1e36ab138d8d54-metasploit-gitlab-97229.txt",
+      "author": "Rapid7 (metasploit module documentation)",
+      "sha256": "bc1e36ab138d8d54c115d3c3ffed56ad9cd6da98218b1952e570763081c8fe2f",
+      "corroborates": "exploit mechanics: lookbehind compiles to 37,151 bytes, repeated 57,805 times, crafted bytecode entered at offset 16,866,665; OP_STEP_BACK_START stages reach a system() gadget; unauthenticated CI lint trigger; per-version native pcode layouts"
+    },
+    {
+      "src": "sources/21f4bca2fd1154ae-gitlab-19-4-2-release.txt",
+      "author": "GitLab (vendor patch release)",
+      "sha256": "21f4bca2fd1154aeaed25d0afb0487c2c9a2c5845f39550557b2879153077607",
+      "corroborates": "CVE-2026-97229: unauthenticated arbitrary code execution via a specially crafted regular expression in a CI/CD configuration; CVSS 10.0; affected versions; Ruby regexp program-size patch shipped in the release"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-97229 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2026-97229 description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-10-29"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

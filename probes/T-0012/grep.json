@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0012",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "proxy_pass|haproxy|nginx|apache|Traffic Server|X-Forwarded",
+    "upstream|proxy_pass|bind|listen",
+    "Transfer-Encoding|Content-Length"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "conf",
+    "public"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

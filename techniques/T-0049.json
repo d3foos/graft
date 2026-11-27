@@ -1,0 +1,188 @@
+{
+  "id": "T-0049",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "The working directory is a process-global another document can move, and relative paths follow it",
+  "index_line": "T-0049 \u00b7 EXEC \u00b7 a `.url` sets the working folder to a remote share; a later relative path resolves there and runs \u00b7 c \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "python",
+      "node",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-73",
+      "CWE-426"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A relative path is assumed to resolve inside the application \u2014 the program's own directory or the user's profile. But path resolution starts at the *current working directory*, which is a process-global that any document the user opens can relocate. A shortcut whose target is a remote share moves the floor, and every subsequent relative reference falls through it.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the user opens a file delivered by the attacker whose target sets the shell/process working directory to a remote share",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the shell resolves the target, mounts/opens the share, and the working folder becomes the remote path",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "a subsequently invoked binary resolves a relative component \u2014 a DLL, a script, a payload \u2014 against that folder",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 4,
+      "does": "the module is fetched over the network from the attacker's share",
+      "primitive": "READ"
+    },
+    {
+      "n": 5,
+      "does": "the fetched code runs in the user's context without any further prompt",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.file.name": {
+      "value": "the delivered document \u2014 its *target path* is the payload; the file itself can be inert"
+    },
+    "fs.path.join": {
+      "value": "relative resolution against a mutable CWD; the join is the vulnerability, not the destination"
+    },
+    "guard.none": {
+      "value": "no restriction on resolution reaching a network share, and the file-type warning is evaluated on the document, not on what it loads"
+    },
+    "sink.exec.noshell": {
+      "value": "the later binary/loader invocation whose relative component resolves remotely"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the platform resolves relative paths against a CWD that a document can change, and allows UNC/remote paths",
+      "check": {
+        "kind": "shell",
+        "spec": "cd /tmp && echo 'probe' > rel.txt && cd / && ls rel.txt 2>&1 | head -1"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the user can be induced to open the document (no interaction-free variant)",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "inspect the delivered file's target/working-directory attribute rather than its contents"
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the follow-on binary loads or executes a component by relative path",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "LoadLibrary\\(\\\"|require_relative|dlopen\\(\\\"|open\\(\\\"[a-z]"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an outbound connection to the attacker's share occurs at open time, before any user action on the payload",
+      "the executing module's path is a UNC/remote path in the process's module list",
+      "no security prompt appears for the final execution because the *document* was not the thing being executed"
+    ],
+    "failure_like": [
+      "relative resolution is anchored to the application directory, or remote paths are refused for module loads",
+      "the working directory is not a per-process global on the platform"
+    ],
+    "false_positive": [
+      "a document that merely contains a URL \u2014 the target must change the working folder of the process",
+      "a blocked prompt during open; the finding needs the later resolution to succeed"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.noshell.json"
+    ],
+    "hazards": [
+      "the CWD is ambient state, like an environment variable \u2014 enumerate what reads it rather than what sets it",
+      "this is a *client-side* record and the only one in the store whose trigger ends at the user's desktop rather than a server",
+      "the payload never has to be in the delivered file; that is why attachment scanners miss it",
+      "the fix is anchoring every load to an absolute, trusted base \u2014 anything less only moves which document wins"
+    ],
+    "non_transfers": [
+      "platforms/loaders that anchor module resolution to the executable's directory (or refuse remote paths outright)",
+      "applications that never resolve relative to a mutable CWD"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.75,
+      "python": 0.6,
+      "node": 0.6,
+      "ruby": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0022"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Microsoft Windows WebDAV working-directory handling (CVE-2025-33053, Stealth Falcon zero-day)"
+  },
+  "provenance": [
+    {
+      "src": "sources/70cb9da54c8b40b4-stealthfalcon-checkpoint.txt",
+      "author": "Check Point Research, Stealth Falcon WebDAV zero-day",
+      "sha256": "70cb9da54c8b40b4f60fbc31621e9f6d18db4490ff9ee1b21159220b858cee7a",
+      "corroborates": "the working-directory manipulation via a .url to an actor-controlled WebDAV server, and the LOLBin chain that follows"
+    },
+    {
+      "src": "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-33053",
+      "author": "Microsoft MSRC (vendor)",
+      "corroborates": "affected versions and the patch"
+    },
+    {
+      "src": "https://therecord.media/microsoft-cisa-zero-day-turkish-defense-org",
+      "author": "The Record (independent reporting)",
+      "corroborates": "independent confirmation of zero-day exploitation before the patch"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-33053 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-73; remote code execution via external control of file name or path"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-06-10; EPSS 0.873"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

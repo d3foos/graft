@@ -1,0 +1,205 @@
+{
+  "id": "T-0038",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A mutable CI tag is a pointer: whoever moves it runs code in every consuming pipeline with that pipeline's secrets",
+  "index_line": "T-0038 \u00b7 INFO_LEAK \u00b7 a version tag is re-pointed at a malicious commit; every workflow pinned to the tag runs it with the job's secrets (execution-class impact; recorded under INFO_LEAK for the exfiltration outcome) \u00b7 any-VCS/CI \u00b7 corroborated",
+  "langs": {
+    "origin": "shell",
+    "transferable": [
+      "shell",
+      "python",
+      "node",
+      "ruby",
+      "php",
+      "go"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-506",
+      "CWE-829"
+    ],
+    "effect": "INFO_LEAK",
+    "stage": "impact"
+  },
+  "invariant_violated": "A dependency reference is read as a version, so 'we use v45' is assumed to mean 'we use that publisher's code at v45'. A tag is not a version, it is a movable label. Whoever can push to the repository can point the label at any commit, and every consumer that pinned the label \u2014 rather than the commit \u2014 runs it with the credentials their workflow already holds.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a widely used build action is referenced by a mutable version tag across thousands of pipelines",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 2,
+      "does": "an attacker who can push to that repository re-points the tag at a commit of their own, keeping the tag name (and often the version string) identical",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 3,
+      "does": "the next pipeline run resolves the tag to the new commit and executes the attacker's step inside the job",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 4,
+      "does": "the step reads the process environment, where CI exposes the job's tokens and inputs, and emits them where the attacker can collect them",
+      "primitive": "READ"
+    },
+    {
+      "n": 5,
+      "does": "the stolen credentials grant write access to the consumers' repositories and to further CI secrets, so the compromise fans out",
+      "primitive": "AUTHZ_CHECK"
+    }
+  ],
+  "slots": {
+    "source.env": {
+      "value": "the CI job environment at run time \u2014 every secret the workflow was trusted with, plus the automatic repository token"
+    },
+    "sink.exec.shell": {
+      "value": "the action's run step: arbitrary shell in the consumer's runner with the job's identity"
+    },
+    "guard.signature": {
+      "value": "the pinning discipline (full commit SHA vs tag) \u2014 the only control that matters, and the one that was absent"
+    },
+    "oracle.channel": {
+      "value": "the exfiltration channel from inside the runner (outbound HTTP, a fork, a PR); it needs no inbound path"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "workflows reference third-party actions by tag or branch instead of a full commit SHA",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "uses:\\s*[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@v?[0-9]",
+            "uses:\\s*[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@(main|master)"
+          ],
+          "paths": [
+            ".github/workflows",
+            ".gitlab-ci.yml"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the job exposes secrets or a write-capable token to the step",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "secrets\\.|GITHUB_TOKEN|CI_JOB_TOKEN|env:"
+          ],
+          "paths": [
+            ".github/workflows",
+            ".gitlab-ci.yml"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the referenced repository/tag can be moved by someone other than the consumer (a third party, or a compromised maintainer)",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "for every `uses:` entry, resolve the ref to a commit and record whether the ref is a mutable tag or a branch rather than a 40-hex SHA"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "pipeline logs show the action executing steps the published version did not contain",
+      "the tag resolves to a commit that is not an ancestor of the tagged release",
+      "outbound requests from runners to unfamiliar hosts immediately after the action step"
+    ],
+    "failure_like": [
+      "every action pinned to a full commit SHA \u2014 the tag cannot move under you",
+      "the job runs with no secrets and a read-only token"
+    ],
+    "false_positive": [
+      "a normal version bump where the tag legitimately moved forward \u2014 the tell is an unexpected *author* or non-linear history",
+      "secrets appearing in logs because the workflow echoed them \u2014 check the commit that added the step"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "this is a supply-chain integrity bug, not a code bug: nothing in the consumer's repository changes, so code review sees nothing",
+      "the blast radius is the union of every job that used the tag \u2014 enumerate consumers by searching public code for the reference",
+      "harden by pinning commit SHAs and, secondarily, by restricting egress; a tag-based allow-list does not help",
+      "the same shape exists for container image tags (`:latest`), Helm chart versions, and package ranges \u2014 anywhere a label is resolved at run time"
+    ],
+    "non_transfers": [
+      "ecosystems that resolve immutable content hashes (npm integrity, Go module checksums, container digests) at install time",
+      "vendored or pinned-by-SHA dependencies"
+    ],
+    "confidence": {
+      "shell": 0.9,
+      "python": 0.6,
+      "node": 0.6,
+      "ruby": 0.55,
+      "php": 0.55,
+      "go": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0005",
+    "T-0014"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "tj-actions/changed-files tags v1\u2013v45.0.7 (CVE-2025-30066)"
+  },
+  "provenance": [
+    {
+      "src": "sources/d76130bc365548e6-tjactions-gitguardian.txt",
+      "author": "GitGuardian supply-chain analysis",
+      "sha256": "d76130bc365548e6b1fcdd25fa119aea6fdf40cc7d6eb94c39bbb91a2566cc0d",
+      "corroborates": "the tag re-pointing, the base64 two-stage payload, the secret patterns observed in leaked logs, and the finding that only ~30% of consumers pin a commit"
+    },
+    {
+      "src": "https://semgrep.dev/blog/2025/popular-github-action-tj-actionschanged-files-is-compromised/",
+      "author": "Semgrep (independent analysis)",
+      "corroborates": "commit-level timeline of the compromise and the exposed-secret mechanism"
+    },
+    {
+      "src": "https://www.stepsecurity.io/blog/harden-runner-detection-tj-actions-changed-files-action-is-compromised",
+      "author": "StepSecurity (independent runtime detection)",
+      "corroborates": "runtime evidence from inside runners: the exact outbound destinations contacted by the malicious step"
+    },
+    {
+      "src": "https://www.wiz.io/blog/github-action-tj-actions-changed-files-supply-chain-attack-cve-2025-30066",
+      "author": "Wiz Research (independent)",
+      "corroborates": "consumer enumeration and impact assessment across repositories"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-30066 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-506, CVSS 3.1 8.6 AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-03-18; EPSS 0.721"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

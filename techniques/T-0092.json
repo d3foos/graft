@@ -1,0 +1,190 @@
+{
+ "id": "T-0092",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The guard validates the key that names the class, and the factory instantiates from a different key",
+ "index_line": "T-0092 · CODE_EXEC · Yii behaviour attach: guard checks `class` is a Behaviour, factory reads `__class` → arbitrary instantiation · php · corroborated",
+ "langs": {
+  "origin": "php",
+  "transferable": [
+   "php",
+   "python",
+   "node",
+   "ruby",
+   "java",
+   "dotnet"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-470",
+   "CWE-502",
+   "CWE-915"
+  ],
+  "capec": [],
+  "effect": "CODE_EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "The behaviour-attachment guard assumed the type being instantiated is named by the key it validates. The configuration array can name a type twice — `class` and `__class` — and the factory reads the other one, so a value that passes the allowlist is not the value that gets constructed.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a request body carries a component configuration containing an 'as <name>' key"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the framework's __set detects the 'as ' prefix and calls attachBehavior with the attacker-supplied array"
+  },
+  {
+   "n": 3,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the guard verifies that $value['class'] is a subclass of the Behaviour base class"
+  },
+  {
+   "n": 4,
+   "primitive": "BYPASS",
+   "bypasses": "guard.sandbox",
+   "does": "the instantiation path resolves a different key ('__class'), so the validated class is never the class that is constructed"
+  },
+  {
+   "n": 5,
+   "primitive": "LOOKUP",
+   "does": "the factory instantiates the attacker-named class with '__construct()' arguments taken from the same array"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "the constructed gadget runs (e.g. FnStream with an attacker callback, PhpManager pointed at a session file), yielding arbitrary code execution"
+  }
+ ],
+ "slots": {
+  "source.http.body": {
+   "value": "a JSON/PHP-array request body whose nested config contains 'as <name>' with class/__class/__construct() keys"
+  },
+  "gadget.magic-method": {
+   "value": "the gadget chain: magic methods and destructors reached through the attacker-chosen class"
+  },
+  "guard.sandbox": {
+   "value": "the 'class must be a Behaviour subclass' allowlist that validates one key while the factory reads another"
+  },
+  "encoding.object-stream": {
+   "value": "the configuration array itself is the object-instantiation encoding — no serialized stream needed"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the application builds component/config arrays from request data (mass assignment of 'as ' keys)",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "attachBehavior|__set\\(|as |load\\(\\$config|Yii::configure"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the installed yii2 version is 2.0.52+ unaffected / below 2.0.52 affected",
+   "check": {
+    "kind": "shell",
+    "spec": "grep -r '\"yiisoft/yii2\"' composer.lock 2>/dev/null | head -3; grep -r 'VERSION' vendor/yiisoft/yii2/BaseYii.php 2>/dev/null | head -3"
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "a gadget class with a useful magic method or destructor is autoloadable",
+   "check": {
+    "kind": "shell",
+    "spec": "ls vendor/guzzlehttp/psr7/src/FnStream.php vendor/yiisoft/yii2/rbac/PhpManager.php 2>/dev/null | head"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "an object of a class unrelated to Behaviour is instantiated with attacker constructor arguments",
+   "a gadget side effect fires (outbound callback, file written or read at an attacker-chosen path)"
+  ],
+  "failure_like": [
+   "the config is rejected because '__class' is not an allowed key",
+   "the fix resolves the type from the validated key only"
+  ],
+  "false_positive": [
+   "a PHP error naming a class does not prove control — require the constructor arguments to be attacker-chosen and the side effect observed",
+   "behaviour attachment working as designed with a legitimate Behaviour subclass is not this bug"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every framework with config-array instantiation (Yii, Laravel, Symfony, Spring, .NET type converters): two keys can name the type",
+   "allowlists that validate a sibling key rather than the value used downstream",
+   "no unserialize() needed — the config array is the object-injection encoding, so deserialization-only filters miss it"
+  ],
+  "non_transfers": [
+   "factories that take the type from the validated key or a fixed map",
+   "applications that never build component configs from request data"
+  ],
+  "confidence": {
+   "php": 0.85,
+   "python": 0.6,
+   "node": 0.6,
+   "ruby": 0.6,
+   "java": 0.55,
+   "dotnet": 0.55
+  }
+ },
+ "combines_with": [
+  "T-0007",
+  "T-0008"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Yii 2 before 2.0.52, behaviour attachment via 'as <name>' config (CVE-2024-58136)"
+ },
+ "provenance": [
+  {
+   "src": "sources/b9dd43189495e11b-yii-sensepost-58136.txt",
+   "author": "SensePost / Orange Cyberdefense CSIRT",
+   "sha256": "b9dd43189495e11bb6b031f0399ed2716f96e0cefea725353ad5d502d103bc5b",
+   "corroborates": "CVE-2024-58136 mechanism: the \"as <name>\" config key attaches a behaviour; the guard checks $value[\"class\"] is a Behavior subclass, but the config also carries a \"__class\" key that the object factory uses, so an attacker instantiates an arbitrary class with attacker-chosen constructor arguments (Guzzle FnStream with _fn_close, yii\\rbac\\PhpManager with itemFile) — object injection to RCE"
+  },
+  {
+   "src": "sources/c0a15aa1cdc03e05-yii-framework-news.txt",
+   "author": "Yii Framework (release notice)",
+   "sha256": "c0a15aa1cdc03e059d4ba0f2d89fda780c8b9df849d266f8488c96dd5b6ea0a4",
+   "corroborates": "vendor: the issue is the regression introduced in GHSA-cjcc-p67m-7qxm while attaching behaviour defined by the __class array key, fixed in 2.0.52 and tracked as CVE-2024-58136"
+  },
+  {
+   "src": "MITRE/NVD CVE-2024-58136 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2024-58136 description (mishandles attaching behaviour defined by an __class array key; regression of CVE-2024-4990)"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

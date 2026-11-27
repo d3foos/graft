@@ -1,0 +1,201 @@
+{
+  "id": "T-0030",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A task-dispatch controller carries the auth check per-action, and one task was written without it \u2014 with no upload type allow-list behind it",
+  "index_line": "T-0030 \u00b7 FILE_WRITE \u00b7 an anonymously reachable controller task writes an attacker-typed file under the web root \u00b7 php/any-task-dispatch \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php",
+      "python",
+      "node",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-434",
+      "CWE-284",
+      "CWE-306"
+    ],
+    "effect": "FILE_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "Authorization is assumed to be a property of the *component*, enforced once at the front of its controller, so individual tasks only need to do their job. Where the controller dispatches to tasks and the check lives in each task, the one task written without it is anonymously reachable \u2014 and an upload handler with no extension allow-list turns that reachability into code on disk.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated request names a component and one of its tasks in the query string",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the component's controller resolves the task name and dispatches straight to it \u2014 the permission check is each task's own responsibility",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the chosen task is an editor convenience (upload a custom icon) and it performs no access check at all, so the request proceeds as an anonymous user",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the uploaded file is written to a folder under the web root with its original extension, because the platform's own upload-validation helpers were not called",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the attacker requests the written file, and the web server executes it in the application's context",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the `option`/`task` pair plus a multipart body \u2014 one request to upload, one to trigger; no session, no CSRF token, no login"
+    },
+    "sink.file.write": {
+      "value": "the upload move/save into a web-reachable directory; the extension and the destination are the two things to check"
+    },
+    "guard.none": {
+      "value": "no per-task access check and no extension allow-list \u2014 the two missing controls are independent, and either alone would have stopped it"
+    },
+    "encoding.path": {
+      "value": "the filename/extension, plus any sub-path the task accepts for the destination"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the component exposes task-style dispatch and at least one task performs a file write",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "task=.*\\.|option=com_|getInput\\('task'\\)|\\$task\\s*=|switch\\s*\\(\\$task\\)"
+          ],
+          "paths": [
+            "components",
+            "administrator",
+            "src"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the upload task does not consult the platform's upload validator (extension allow-list / MIME check)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "move_uploaded_file|\\$_FILES|UploadedFile|save\\(.*upload",
+            "filter.*extension|allowedExtensions|checkFile"
+          ],
+          "paths": [
+            "components",
+            "administrator",
+            "src"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "uploaded files land in a directory the web server executes (not a no-exec or off-root location)",
+      "check": {
+        "kind": "shell",
+        "spec": "find . -path '*/images/*' -o -path '*/media/*' | head; grep -RniE 'php_flag engine off|RemoveHandler' images/ media/ 2>/dev/null | head"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the component version predates the fixed release",
+      "check": {
+        "kind": "shell",
+        "spec": "grep -Rho 'version[\"'\"'\": ]*[0-9.]\\+' administrator/components/com_*/manifest.xml 2>/dev/null | head"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an anonymous POST to the task returns success, and a GET to the written path returns executed output (not source)",
+      "the file keeps the extension the attacker chose \u2014 no rename, no forced image type",
+      "the response to the trigger request proves execution in the app's context, not a proxy error page"
+    ],
+    "failure_like": [
+      "the task is behind a token/permission check (the fix) and answers 401/403",
+      "the platform's upload validator is called, so only image extensions survive",
+      "the destination directory has execution disabled"
+    ],
+    "false_positive": [
+      "a 200 from the upload with the file stored as `.php.txt` or in a no-exec directory \u2014 check the stored name and the directory's handler config",
+      "the component being unpublished: the task may still be reachable if the component's controller is loaded",
+      "a shell that runs only because the attacker was already admin \u2014 this record's value is the *anonymous* reachability"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "component-task dispatch is the classic 'auth per action' anti-pattern: enumerate the task map and diff which tasks check and which do not \u2014 that diff is the finding",
+      "unpublishing a component does not remove its controller; a reachable task is reachable regardless of the UI",
+      "the two missing controls (auth and type) are independent \u2014 reporting only one understates the fix required",
+      "after exploitation the payload usually plants a second, durable admin; hunt for the persistence, not just the shell"
+    ],
+    "non_transfers": [
+      "frameworks whose dispatcher enforces a permission map before any task runs",
+      "upload paths that always re-encode the file (image resamplers) or rename to a fixed extension",
+      "destinations outside the document root"
+    ],
+    "confidence": {
+      "php": 0.85,
+      "python": 0.6,
+      "node": 0.6,
+      "ruby": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0013"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "SP Page Builder <= 6.6.1 for Joomla (CVE-2026-48908); fixed 6.6.2"
+  },
+  "provenance": [
+    {
+      "src": "sources/e07f636f458fc190-spb-mysites.txt",
+      "author": "mySites.guru responsible-disclosure write-up (CVE-2026-48908)",
+      "sha256": "e07f636f458fc1904917eb80f397b93b1b8a6ec2eb1ef1bcf497e2c05222b6ef",
+      "corroborates": "the task name, the missing access check, the missing allow-list, the post-exploitation artefacts, and the fix's shape (auth + CSRF before every task)"
+    },
+    {
+      "src": "https://www.joomshaper.com/forum/question/45152",
+      "author": "JoomShaper (vendor, forum disclosure thread)",
+      "corroborates": "vendor acknowledgement and fixed version"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-48908 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'unauthenticated users to upload arbitrary files, ultimately resulting in the upload and execution of PHP code'; CWE-434; CVSS 3.1 9.8"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-07-07; EPSS 0.884"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

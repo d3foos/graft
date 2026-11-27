@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0006",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "writeFile|createWriteStream|File\\.Write|open\\([^)]*['\"]w|extract|unzip|adm-zip|decompress",
+    "path\\.(join|resolve)|os\\.path\\.join|Path\\.Combine|Paths\\.get|filepath\\.Join|File\\.join|\\.resolve\\(",
+    "req\\.(query|body|params)|entry\\.name|fileName|file\\.name"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

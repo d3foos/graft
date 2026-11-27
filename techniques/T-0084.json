@@ -1,0 +1,192 @@
+{
+ "id": "T-0084",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "An upload endpoint uses the caller's ID as a path component, and the attacker aims the write at a module the interpreter imports on startup",
+ "index_line": "T-0084 · FILE_WRITE · image-ID path traversal writes sitecustomize.py, then a training call spawns Python that imports it · python · corroborated",
+ "langs": {
+  "origin": "python",
+  "transferable": [
+   "python",
+   "node",
+   "php",
+   "ruby",
+   "java",
+   "dotnet"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-22",
+   "CWE-73",
+   "CWE-434"
+  ],
+  "capec": [],
+  "effect": "FILE_WRITE",
+  "stage": "impact"
+ },
+ "invariant_violated": "The datastore treated the caller-supplied image ID as a name inside its directory, but it was a path: it was appended, joined and copied to without ever resolving the result. The escalation assumes something further — that the only files worth writing are the application's own, when a file the language runtime imports at startup turns a data write into code execution.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated PUT to /datastore/image carries an uploaded file and an attacker-chosen image query parameter"
+  },
+  {
+   "n": 2,
+   "primitive": "NORMALIZE",
+   "does": "the handler appends the file extension and joins the ID onto the datastore image directory"
+  },
+  {
+   "n": 3,
+   "primitive": "WRITE",
+   "does": "the upload is copied to the resulting path with no check that the resolved destination stays inside the datastore (../../../<dir>/x escapes it)"
+  },
+  {
+   "n": 4,
+   "primitive": "LOOKUP",
+   "does": "the attacker chooses a destination the runtime loads by itself — sitecustomize.py in the interpreter's import path — instead of a path the application serves"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "a training API call spawns a new Python process on the server"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "the new interpreter imports sitecustomize.py during startup, running the payload before any application code and yielding a shell with the service's privileges"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "PUT /datastore/image with the image query parameter as the path component"
+  },
+  "sink.file.write": {
+   "value": "LocalDatastore.add_image() / save_label(): shutil.copy() to a path built from the image ID, with no containment check"
+  },
+  "fs.path.join": {
+   "value": "ID + extension joined onto the datastore directory; a traversal ID resets the join out of the tree"
+  },
+  "encoding.path": {
+   "value": "the 'image ID' is treated as a name; the filesystem treats it as a path"
+  },
+  "guard.none": {
+   "value": "no resolve-then-prefix check on the destination, no basename reduction, no dot-prefixed ID rejection (all added by the fix)"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the MONAI Label API is reachable without authentication",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/datastore/image; curl -s http://HOST/info/ 2>/dev/null | head -c 200"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the deployed package predates 0.8.6 / the fix in PR 1915",
+   "check": {
+    "kind": "shell",
+    "spec": "python3 -c 'import monailabel,sys;print(getattr(monailabel,\"__version__\",\"?\"))' 2>/dev/null || grep -rE 'monai(label)?[=<>]' requirements*.txt setup.cfg pyproject.toml 2>/dev/null"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the datastore write path joins the caller's image ID without resolving containment",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "add_image|save_label|shutil\\.copy|datastore/image"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a file appears outside the datastore directory at a path the attacker named",
+   "a newly spawned training process executes the dropped module before application code (shell/callback)"
+  ],
+  "failure_like": [
+   "the endpoint reduces the ID to a basename or rejects dot-segments (400)",
+   "the resolved destination is verified to be inside the datastore image/label directory"
+  ],
+  "false_positive": [
+   "a 200 from the upload endpoint without a file outside the datastore is not this bug",
+   "a file written inside the datastore under a nested name is normal storage behaviour"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any 'ID becomes a filename' upload in a service that can write outside its data directory",
+   "the escalation primitive is generic: sitecustomize.py / usercustomize.py (Python), NODE_OPTIONS+require hooks, .pth files, cron.d, PHP auto_prepend_file, JVM agents",
+   "root privileges are common because the service runs as root in a container or appliance"
+  ],
+  "non_transfers": [
+   "uploads that store content under a server-generated opaque ID",
+   "services whose runtime does not import from a writable directory at startup"
+  ],
+  "confidence": {
+   "python": 0.9,
+   "node": 0.7,
+   "php": 0.6,
+   "ruby": 0.6,
+   "java": 0.6,
+   "dotnet": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0006",
+  "T-0057"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "MONAI Label before 0.8.6, PUT /datastore/image (CVE-2026-133968), exploited in the wild from 2026-09"
+ },
+ "provenance": [
+  {
+   "src": "sources/e12e2874187d4e35-monai-aws-threat-intel.txt",
+   "author": "Amazon Threat Intelligence (AWS Security Blog)",
+   "sha256": "e12e2874187d4e35c9885b9dbff943553bd25f487f9f7bd90b9b6e93f1ad1e42",
+   "corroborates": "in-the-wild exploitation of CVE-2026-133968: agents mapped the API, found an upload endpoint with a filename parameter, confirmed path traversal, wrote files arbitrarily, dropped a Python reverse shell as sitecustomize.py, then triggered a training API endpoint to spawn a new interpreter that imported the payload — reverse shell as root"
+  },
+  {
+   "src": "sources/40f55034466e4f53-monai-label-ghsa.txt",
+   "author": "Project MONAI maintainers (GHSA-qc22-rmgc-vg94)",
+   "sha256": "40f55034466e4f537f947d5497c79df3d353fde768b71199e6ede29fcfc64a3b",
+   "corroborates": "code-level root cause: PUT /datastore/image takes a caller-controlled image query parameter as the image ID; LocalDatastore.add_image() appends the extension, joins it onto the datastore directory and writes with shutil.copy(), never checking the resolved path stays inside the datastore; save_label() does the same; fixed in #1915 by resolving and rejecting escapes"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-133968 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-133968: monailabel before 0.8.6 allows directory traversal with resultant RCE via the image parameter to PUT /datastore/image, exploited in the wild"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2026-11-23"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.85
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

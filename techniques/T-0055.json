@@ -1,0 +1,182 @@
+{
+  "id": "T-0055",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The auth filter is an exclusion list of routes: every path added for a reason is unauthenticated by construction",
+  "index_line": "T-0055 \u00b7 EXEC \u00b7 58 endpoints excluded from the auth filter, one of them deploys a ZIP \u00b7 java \u00b7 corroborated",
+  "langs": {
+    "origin": "java",
+    "transferable": [
+      "java",
+      "dotnet",
+      "php",
+      "python",
+      "node"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-306",
+      "CWE-288",
+      "CWE-434"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Authentication is assumed to be on by default with a few deliberate holes for endpoints that must work before login. But a filter written as a list of exceptions inverts the default: safety becomes a property of not being on the list, and the list only grows. Each addition was reasonable in isolation, and one of them is a code path with real power.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker enumerates routes on the management portal and finds those answered without a session",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the route table is filtered by an exclusion list, so 58 endpoints never reach the authentication check",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "one excluded endpoint accepts an uploaded package and expands it on the server",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 4,
+      "does": "the archive's member paths are honoured on expansion, so content lands outside the intended directory",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 5,
+      "does": "a written component is loaded by the application on the next start or request",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "a POST to an excluded route \u2014 no credentials, and the route is found by enumeration rather than the UI"
+    },
+    "guard.none": {
+      "value": "the exclusion list itself: the guard is per-route and defaults to absent"
+    },
+    "sink.file.write": {
+      "value": "the package expansion writing archive members to disk"
+    },
+    "encoding.path": {
+      "value": "member names inside the archive deciding where each file lands"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the management portal is network-reachable",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sk -o /dev/null -w '%{http_code}\\n' https://HOST/commandcenter/"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "authentication is enforced by a filter that lists excluded paths",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "excludePath|excluded|permitAll|shouldNotFilter|addPathPatterns|filterChain"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "an excluded route performs a write or deployment action",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "request each excluded route without a cookie and record which return non-auth responses with side effects"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an unauthenticated POST to the deployment route returns a task/acceptance response instead of a redirect to login",
+      "a file appears on the server from an archive supplied in that request",
+      "the enumeration of all excluded routes is a finding by itself \u2014 list them"
+    ],
+    "failure_like": [
+      "the filter defaults to deny and enumerates what needs authentication",
+      "the deployment route validates a signed package or a shared secret"
+    ],
+    "false_positive": [
+      "a login, health or static route answering unauthenticated \u2014 that is the design",
+      "a 302 to the login page read as success: check the body and the side effect"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "the audit artefact is the exclusion list: dump it and diff it against the routes that actually do work",
+      "every framework has this construct (Spring shouldNotFilter, servlet url-patterns, Express ordering, permitAll) \u2014 read it as attack surface, not config",
+      "deploy, restore and import routes are the ones to read first: they were excluded because another system calls them, and they write files",
+      "distinct from T-0051 (a guard inside a conditional) and T-0046 (a guard simply absent): here the guard is deliberately bypassed per route"
+    ],
+    "non_transfers": [
+      "default-deny filter chains with an explicit allow-list of methods rather than paths",
+      "deployment routes that require a signed artefact"
+    ],
+    "confidence": {
+      "java": 0.85,
+      "dotnet": 0.75,
+      "php": 0.75,
+      "python": 0.7,
+      "node": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0051",
+    "T-0030"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Commvault Command Center Innovation Release (CVE-2025-34028)"
+  },
+  "provenance": [
+    {
+      "src": "sources/597c087d3e80cd21-commvault-watchtowr.txt",
+      "author": "watchTowr Labs Commvault research, CVE-2025-34028",
+      "sha256": "597c087d3e80cd21a095a784177d5d5cb85dd74156ef156ddfc04a23892f76ac",
+      "corroborates": "the 58 pre-authenticated endpoints, deployWebpackage.do, and the package-expansion path to RCE"
+    },
+    {
+      "src": "https://github.com/watchtowrlabs/watchTowr-vs-Commvault-PreAuth-RCE-CVE-2025-34028",
+      "author": "watchTowr Labs (public PoC)",
+      "corroborates": "working exploit independent of the blog narrative"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-34028 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "unauthenticated actor uploads ZIP install packages which are expanded; CWE-434"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-05-02; EPSS 0.976"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

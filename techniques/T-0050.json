@@ -1,0 +1,184 @@
+{
+  "id": "T-0050",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "A password check that compares against a format string: the magic value is the credential",
+  "index_line": "T-0050 \u00b7 AUTH_DECISION \u00b7 the stored credential is a constant template, so the string that matches it is a shared secret \u00b7 c \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "perl",
+      "python"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-798",
+      "CWE-287"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A credential is assumed to be something only the legitimate user knows, so the comparison is a formality: any value that matches is fine. But if the value it matches is a *constant in the firmware* \u2014 and one shaped like a printf template \u2014 then the credential is published with the product, and the comparison is all that stands between anyone and the account.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an attacker presents a username and the constant the firmware compares against, on the management interface",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the authentication path reads its expected value from a fixed location rather than from a per-device secret",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the comparison succeeds for anyone who supplies the constant",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the session is granted full administrative rights with no device-specific material involved",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 5,
+      "does": "the attacker configures the device \u2014 including its VPN policy, which is what made this one notable",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "sink.auth.jwt-verify": {
+      "value": "the credential-comparison call site \u2014 the guard is what is compared against, so the defect is in its right-hand side"
+    },
+    "source.protocol": {
+      "value": "the management protocol's login exchange (SSH, HTTPS admin, console) \u2014 no web exploitation needed"
+    },
+    "guard.none": {
+      "value": "no per-device secret, no password file, no hashing: the comparison is against a literal"
+    },
+    "encoding.string": {
+      "value": "the literal itself, including its printf-shaped punctuation, which makes it searchable in a firmware dump"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "the credential comparison uses a constant rather than a stored hash",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "strcmp\\(.*\\\"<<<|== *\\\"[^\\\"]*%s|password.*=.*\\\"[^\\\"]*%[su]"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the management interface is reachable and accepts password authentication",
+      "check": {
+        "kind": "shell",
+        "spec": "nc -w2 HOST 22 </dev/null | head -1; curl -sk -o /dev/null -w '%{http_code}\\n' https://HOST/"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the literal is present in the shipped image (searchable in a dump, not secret)",
+      "check": {
+        "kind": "shell",
+        "spec": "strings firmware.bin | grep -F \"<<< %s(un='%s') = %u\" || strings firmware.bin | grep -c 'un=' "
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a login succeeds with a password that appears verbatim in the vendor's own binary",
+      "the credential works on every device of that firmware generation \u2014 it is not tied to the device",
+      "no failure counter or lockout responds, because nothing about the attempt is anomalous to the code"
+    ],
+    "failure_like": [
+      "the expected value is derived per device (a hash of a serial, a stored secret)",
+      "the interface has been patched to remove the constant"
+    ],
+    "false_positive": [
+      "a default password that is documented and changeable \u2014 that is a hardening problem, not this",
+      "a string in the binary that looks like a credential but is never compared against a supplied value"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.auth.jwt-verify.json"
+    ],
+    "hazards": [
+      "the highest-value search in any firmware assessment is `strings | grep '%'` \u2014 a credential shaped like a format template is a constant comparison",
+      "this class is found by diffing a pre-backdoor and post-backdoor build, not by reading source: the code looks like ordinary auth",
+      "a constant credential makes every affected device one population, so remediation is a recall-shaped problem, not a patch",
+      "the same audit question applies to every 'vendor service account' \u2014 who derives its secret, and from what?"
+    ],
+    "non_transfers": [
+      "authentication against per-device stored hashes",
+      "systems where the vendor account's secret is generated at manufacture"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "cpp": 0.8,
+      "perl": 0.6,
+      "python": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0051",
+    "T-0007"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "Juniper ScreenOS 6.2.0r15\u20136.3.0r19 (CVE-2015-7755), backdoor removed in later builds"
+  },
+  "provenance": [
+    {
+      "src": "sources/2826f618ca044936-juniper-hdm.txt",
+      "author": "HD Moore analysis of CVE-2015-7755 (juniper-cve-2015-7755)",
+      "sha256": "2826f618ca044936284cb646431412bb2edd5b13c3a79b672876dcfe3771db34",
+      "corroborates": "the exact constant `<<< %s(un='%s') = %u`, the affected build matrix per firmware image, and the CVE-2015-7756 RNG finding alongside it"
+    },
+    {
+      "src": "https://kb.juniper.net/InfoCenter/index?page=content&id=JSA10713",
+      "author": "Juniper (vendor advisory JSA10713)",
+      "corroborates": "vendor confirmation and the fixed releases"
+    },
+    {
+      "src": "https://www.wired.com/2015/12/juniper-networks-hidden-backdoors-show-the-risk-of-government-backdoors/",
+      "author": "Wired (independent reporting)",
+      "corroborates": "independent coverage of the unauthorised code"
+    },
+    {
+      "src": "http://www.kb.cert.org/vuls/id/640184",
+      "author": "CERT/CC (independent vulnerability note)",
+      "corroborates": "independent technical record of the authentication bypass"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-10-02; EPSS 0.614"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

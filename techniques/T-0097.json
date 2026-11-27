@@ -1,0 +1,195 @@
+{
+ "id": "T-0097",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The session identifier in an SRP exchange is built from a timestamp, so the shared key can be recomputed instead of proven",
+ "index_line": "T-0097 · AUTH_DECISION · vmdir SRP-6a over DCE/RPC: UUIDv1-derived session id → session key recovered without a password · cpp · corroborated",
+ "langs": {
+  "origin": "cpp",
+  "transferable": [
+   "cpp",
+   "c",
+   "java",
+   "go",
+   "rust",
+   "dotnet"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-330",
+   "CWE-287",
+   "CWE-345"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "SRP assumes the session material it derives is unpredictable to an observer: the shared key is only ever *proven*, never transmitted. When the session identifier is generated from a UUIDv1 — a timestamp plus a MAC — the material is guessable within a window, so the key can be computed by an unauthenticated peer and the proof of password knowledge becomes unnecessary.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated attacker opens an SRP-6a authentication exchange with vmdir over the DCE/RPC interface on port 2012"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the server answers with its SRP challenge, which carries the session identifier the pair will derive keys from"
+  },
+  {
+   "n": 3,
+   "primitive": "LOOKUP",
+   "does": "that identifier was generated from a UUIDv1 — a timestamp plus a MAC-derived node — so the attacker learns its structure from the challenge"
+  },
+  {
+   "n": 4,
+   "primitive": "COMPARE",
+   "does": "the timestamp component narrows the identifier to an enumerable window, so the shared session key is recomputed instead of proven"
+  },
+  {
+   "n": 5,
+   "primitive": "BYPASS",
+   "bypasses": "guard.signature",
+   "does": "the key is derived by the attacker, so the credential proof the protocol relies on never has to be satisfied"
+  },
+  {
+   "n": 6,
+   "primitive": "AUTHZ_CHECK",
+   "does": "an authenticated session is established as administrator@vsphere.local"
+  },
+  {
+   "n": 7,
+   "primitive": "INVOKE",
+   "does": "the vmdirdbcp RPC interface is used to run commands and read data.mdb, the directory's credential store"
+  }
+ ],
+ "slots": {
+  "source.protocol": {
+   "value": "the vmdir DCE/RPC authentication interface (TCP 2012): SRP-6a handshake frames"
+  },
+  "guard.signature": {
+   "value": "the SRP key-proof step that is replaced by recomputation because the session material is predictable"
+  },
+  "sink.file.read": {
+   "value": "the data.mdb directory database read through vmdirdbcp once administrator@vsphere.local is held"
+  },
+  "oracle.channel": {
+   "value": "the recovered session key itself is the oracle — a successful session proves the recomputation worked"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the vmdir RPC authentication service is reachable (TCP 2012)",
+   "check": {
+    "kind": "shell",
+    "spec": "timeout 5 bash -c 'exec 3<>/dev/tcp/HOST/2012 && echo open || echo closed'; curl -sk -o /dev/null -w '%{http_code}\\n' https://HOST/sdk"
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the vCenter build predates 9.1.1.0200 / 9.0.2.0200 / 8.0 U3m / 5.2.5",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -sk https://HOST/sdk/vimServiceVersions.xml | head -c 200; printf 'version also in the vSphere Client About box\\n'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the directory service derives SRP session material from a UUIDv1",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "srp|uuid1|UuidCreateSequential|session.?key"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "an authenticated vSphere session as administrator@vsphere.local without any credential",
+   "subsequent vmdirdbcp calls returning directory data or executing commands"
+  ],
+  "failure_like": [
+   "the build generates the session identifier from a CSPRNG and rejects recomputation",
+   "port 2012 is not reachable from the attacker's position"
+  ],
+  "false_positive": [
+   "a successful anonymous SOAP call to /sdk is not this bug — require an authenticated session object",
+   "log entries showing failed SRP attempts are the handshake, not the compromise"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any PAKE/SRP/challenge-response exchange whose nonce or session id comes from a time-based generator",
+   "UUIDv1 is a timestamp in disguise: it is an identifier, never a secret",
+   "the recovered key yields the highest-privilege directory identity, so the bypass lands as administrator"
+  ],
+  "non_transfers": [
+   "exchanges that use CSPRNG nonces and bind them into the key derivation",
+   "services that do not expose the authentication RPC to untrusted networks"
+  ],
+  "confidence": {
+   "cpp": 0.85,
+   "c": 0.75,
+   "java": 0.6,
+   "go": 0.6,
+   "rust": 0.55,
+   "dotnet": 0.55
+  }
+ },
+ "combines_with": [
+  "T-0011",
+  "T-0091"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "VMware vCenter Server, VMware Directory Service (vmdir) SRP over DCE/RPC (CVE-2026-123890, ARMORY CASTLE)"
+ },
+ "provenance": [
+  {
+   "src": "sources/2a484fe758e42621-vcenter-google-armory-castle.txt",
+   "author": "Google Threat Intelligence / Mandiant (ARMORY CASTLE)",
+   "sha256": "2a484fe758e4262119f745435164d15de49e95a56afd2a7037e69be956f79432",
+   "corroborates": "CVE-2026-123890: unauthenticated SRP-6a session-key disclosure over DCE/RPC on port 2012, exploiting predictable UUIDv1 timestamp generation in the SRP authentication interface; the shared session key is recovered without any password, producing a session as administrator@vsphere.local, then vmdirdbcp is used to run commands and exfiltrate data.mdb"
+  },
+  {
+   "src": "sources/9da26fb852ad7b91-vcenter-broadcom-vmsa-2026-0009.txt",
+   "author": "Broadcom (VMSA-2026-0009)",
+   "sha256": "9da26fb852ad7b9148e5312a16d9422d5b946297c8036051a5a87447ae941712",
+   "corroborates": "vendor advisory: vCenter authentication-bypass vulnerability (CVE-2026-123890) in the VMware Directory Service; Critical, maximum CVSSv3 base score 9.8; fixed in 9.1.1.0200 / 9.0.2.0200 / 8.0 U3m / 5.2.5"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-123890 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-123890 description and affected version matrix"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2026-11-20"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

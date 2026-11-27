@@ -1,0 +1,186 @@
+{
+ "id": "T-0089",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "One parameter is escaped and the next is concatenated: the shell call trusts per-parameter discipline instead of one encoding at the boundary",
+ "index_line": "T-0089 · EXEC · unauthenticated API action builds `sudo cloudx_cli … $cloud_type` with raw concatenation → root RCE · php · corroborated",
+ "langs": {
+  "origin": "php",
+  "transferable": [
+   "php",
+   "python",
+   "node",
+   "ruby",
+   "perl",
+   "java",
+   "go"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-78",
+   "CWE-88",
+   "CWE-20"
+  ],
+  "capec": [],
+  "effect": "EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "The dispatcher assumed that a parameter reaching a shell command is safe because the codebase's habit is to wrap parameters in escapeshellarg. Escaping was applied per parameter at each call site rather than to the whole argument vector, so the parameters nobody remembered — a cloud-type selector that looks like an integer — were concatenated raw into a command that runs under sudo.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated request to the controller's API supplies an action and its parameters (e.g. cloud_type)"
+  },
+  {
+   "n": 2,
+   "primitive": "LOOKUP",
+   "does": "the PHP wrapper dispatches on the action name and assembles a cloudx_cli command line for that action"
+  },
+  {
+   "n": 3,
+   "primitive": "CONCAT",
+   "does": "most parameters pass through escapeshellarg, but the selected parameter is concatenated directly into the string ('sudo cloudx_cli … resource_report $cloud_type')"
+  },
+  {
+   "n": 4,
+   "primitive": "EXEC",
+   "does": "the assembled string is passed to the shell through exec_command, running as root via sudo"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "shell metacharacters in the unescaped parameter execute attacker commands on the controller with root privileges"
+  }
+ ],
+ "slots": {
+  "source.http.request": {
+   "value": "the controller's API endpoint: an action name plus parameters, reachable without authentication"
+  },
+  "sink.exec.shell": {
+   "value": "exec_command() running the assembled cloudx_cli string through a shell under sudo"
+  },
+  "guard.escaping": {
+   "value": "escapeshellarg applied to most parameters at each call site — the guard that is absent for exactly one parameter"
+  },
+  "guard.none": {
+   "value": "no argument-vector API and no validation that the selector is numeric/an enum"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the controller API is reachable without authentication",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' https://HOST/v1/api; curl -s -o /dev/null -w '%{http_code}\\n' -X POST https://HOST/v1/api -d 'action=list_flightpath_destination_instances'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build predates 7.1.4191 / 7.2.4996",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s https://HOST/v1/api -d 'action=signin' | head -c 200; printf 'controller version also visible in the UI footer\\n'"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the API wrapper concatenates a parameter into a cloudx_cli command",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "cloudx_cli|escapeshellarg|exec_command"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a command substitution in the parameter produces its output or an out-of-band callback from the controller",
+   "the process tree shows a shell spawned by the PHP wrapper with cloudx_cli in the arguments"
+  ],
+  "failure_like": [
+   "the parameter is cast to an integer or passed as a discrete argv element",
+   "the endpoint requires an authenticated session"
+  ],
+  "false_positive": [
+   "an error page naming cloudx_cli means the wrapper ran — not that injection succeeded; require command output or a callback",
+   "a 200 from the API root is reachability only"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every thin API wrapper around a CLI: the wrapper's escaping discipline is per-call-site and rots",
+   "parameters that look like enums/ints (cloud_type, region, mode) are the ones reviewers skip",
+   "running the wrapper under sudo converts a web bug into root"
+  ],
+  "non_transfers": [
+   "call sites that build an argv array and pass it to an exec-style API without a shell",
+   "wrappers that validate parameters against an enum before use"
+  ],
+  "confidence": {
+   "php": 0.9,
+   "python": 0.75,
+   "node": 0.7,
+   "ruby": 0.7,
+   "perl": 0.7,
+   "java": 0.6,
+   "go": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0005",
+  "T-0036"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Aviatrix Network Controller < 7.1.4191 / 7.2.x < 7.2.4996, PHP API → cloudx_cli (CVE-2024-50603)"
+ },
+ "provenance": [
+  {
+   "src": "sources/8306e035ee32decc-aviatrix-securingpl.txt",
+   "author": "Securing.pl (research)",
+   "sha256": "8306e035ee32decc950cd248acc5a6981e03e7bbe7e4f84c3188956e8c5ee38a",
+   "corroborates": "CVE-2024-50603: the exposed PHP API builds a cloudx_cli command line per action; most parameters go through escapeshellarg but cloud_type (list_flightpath_destination_instances) and src_cloud_type (flightpath_connection_test) are concatenated raw into a sudo command, giving unauthenticated root command execution"
+  },
+  {
+   "src": "sources/a9b5555c851e83d3-aviatrix-psirt-advisory.txt",
+   "author": "Aviatrix PSIRT (PSIRT advisory)",
+   "sha256": "a9b5555c851e83d36eee930e664a8b1ecb0e7b3e14c44ace8fc032bdcd3bd7ce",
+   "corroborates": "vendor advisory for CVE-2024-50603: an unauthenticated user can execute arbitrary commands against Aviatrix Controllers; CVSS 9.9 AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H; fixed in 7.1.4191 / 7.2.4996; notes active exploitation attempts"
+  },
+  {
+   "src": "MITRE/NVD CVE-2024-50603 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2024-50603 description and affected versions"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

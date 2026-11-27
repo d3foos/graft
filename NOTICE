@@ -1,0 +1,29 @@
+GRAFT Notice
+============
+
+Copyright (c) 2026 Abdulrahman Almuhairi
+
+This project ("GRAFT") is licensed under the GNU Affero General Public License
+v3.0 or later (AGPL-3.0-or-later). See the LICENSE file for the complete
+official license text.
+
+Scope of AGPL-3.0 Coverage
+--------------------------
+The GNU Affero General Public License v3.0 applies to all original works in this
+repository, including:
+- Python tooling (`tools/tdb.py`, `tools/ed25519.py`, packaging/installer scripts)
+- Agent skill definitions, plugin manifests, and rules (`SKILL.md`, `plugin.json`,
+  `.claude-plugin/`, `.agents/`, `rules/`)
+- Schema v4 structure, controlled vocabularies (`vocab/`), and equivalence tables
+  (`vocab/equivalents/`)
+- Curated slot-parameterised technique records (`techniques/`), static probes
+  (`probes/`), and test suites (`tests/`)
+
+Third-Party Citations
+---------------------
+Technique records cite public CVEs, vendor advisories, MITRE CWE/CAPEC entries,
+and public security write-ups solely as factual provenance metadata (`provenance`
+entries with source URLs, author attributions, or SHA-256 digests). No external
+third-party articles, advisories, or copyrighted write-ups are redistributed in
+this repository; those referenced works remain the property and copyright of
+their respective authors and publishers.

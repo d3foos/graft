@@ -1,0 +1,180 @@
+{
+ "id": "T-0093",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "A credit counter that can go negative is later used as a copy length, and the window that was meant to bound the write becomes the overflow",
+ "index_line": "T-0093 · MEM_WRITE · HTTP/2 send-window underflow → invalid copy length → heap OOB in the nginx worker · c · corroborated",
+ "langs": {
+  "origin": "c",
+  "transferable": [
+   "c",
+   "cpp",
+   "go",
+   "rust",
+   "java"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-191",
+   "CWE-787",
+   "CWE-190"
+  ],
+  "capec": [],
+  "effect": "MEM_WRITE",
+  "stage": "impact"
+ },
+ "invariant_violated": "Flow control is assumed to be a bound: the peer grants credit, the server never sends more than the credit allows, so the credit variable is a limit, not untrusted data. But the credit is adjusted by a peer-supplied delta and held in an unsigned counter — a reduction can wrap it, and the arithmetic that was supposed to forbid a copy then authorises an impossible one.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated HTTP/2 client sends SETTINGS with a reduced SETTINGS_INITIAL_WINDOW_SIZE and/or WINDOW_UPDATE frames"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "nginx adjusts each active stream's remaining send credit by the difference between the old and new setting"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "a reduction drives the stream's unsigned send_window below zero, wrapping it to an enormous value instead of clamping at zero"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "the client cancels queued response data, and a later response is queued/copied using the invalid credit as a length"
+  },
+  {
+   "n": 5,
+   "primitive": "WRITE",
+   "does": "the resulting copy runs past the destination buffer, giving a heap out-of-bounds write (and a read for disclosure)"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "with heap shaping the corruption reaches control data, executing code with the nginx worker's privileges"
+  }
+ ],
+ "slots": {
+  "source.protocol": {
+   "value": "HTTP/2 frames on an unauthenticated connection: SETTINGS_INITIAL_WINDOW_SIZE, WINDOW_UPDATE, RST_STREAM, DATA"
+  },
+  "size.length": {
+   "value": "the send-window counter used as a permitted length after an unsigned underflow"
+  },
+  "sync.window": {
+   "value": "the per-stream and per-connection flow-control windows — the resource accounting that is supposed to bound the write"
+  },
+  "sink.memory.copy": {
+   "value": "the response-queue copy whose length comes from the corrupted window"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "HTTP/2 is enabled on a listening port",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -sI --http2 https://HOST/ | head -3; grep -rE 'listen .*http2|http2 on' /etc/nginx 2>/dev/null | head"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build is in the affected range (1.9.5 through 1.31.8)",
+   "check": {
+    "kind": "shell",
+    "spec": "nginx -v 2>&1 | head -1"
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the server returns DATA under HTTP/2 flow control (any content type; no backend needed)",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s --http2 -o /dev/null -w '%{http_version} %{size_download}\\n' https://HOST/"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "worker crash or corrupted response under a crafted window sequence (many WINDOW_UPDATE frames on one long-lived connection, little data returned)",
+   "memory disclosure in a response body before control-flow hijack"
+  ],
+  "failure_like": [
+   "HTTP/2 disabled on the listening port",
+   "the build clamps the stream window at zero and rejects invalid SETTINGS deltas"
+  ],
+  "false_positive": [
+   "a worker restart under load is not this bug — require the frame sequence and the accounting anomaly (bytes_received climbing while bytes_sent stays low)",
+   "HTTP/2 probe support alone is reachability, not exploitability"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "every protocol with peer-granted credit (HTTP/2, HTTP/3, QUIC, SPDY, custom flow control): a credit counter is untrusted input",
+   "signed/unsigned mixed arithmetic in accounting code that later feeds a memcpy length",
+   "the guard that should have stopped the copy is the same value that was corrupted"
+  ],
+  "non_transfers": [
+   "implementations that clamp credit at zero and re-validate before each copy",
+   "servers with HTTP/2 disabled"
+  ],
+  "confidence": {
+   "c": 0.9,
+   "cpp": 0.75,
+   "go": 0.6,
+   "rust": 0.6,
+   "java": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0010",
+  "T-0031"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "nginx HTTP/2 send-window accounting, 1.9.5-1.31.8 (CVE-2026-123007, nginx2root)"
+ },
+ "provenance": [
+  {
+   "src": "sources/3080985580cb2f70-nginx-rapid7-123007.txt",
+   "author": "Rapid7 (Vulnerability Research)",
+   "sha256": "3080985580cb2f709997b09a562c34571f4170641bb22ee23bc219684ad301c3",
+   "corroborates": "CVE-2026-123007: HTTP/2 flow-control accounting; a SETTINGS_INITIAL_WINDOW_SIZE reduction changes each active stream window by the delta and can leave a stream with negative credit, the client cancels queued DATA and nginx later copies a response with an invalid length — CWE-191 integer underflow, worker-context RCE"
+  },
+  {
+   "src": "sources/e8514811afd9f789-nginx-xint-nginx2root.txt",
+   "author": "Xint (nginx2root)",
+   "sha256": "e8514811afd9f7890238b8a3ffebeb2df4393f40452f603cb2f29ef021155d3c",
+   "corroborates": "CVE-2026-123007: send-window arithmetic lets a window exceed its permitted maximum, producing an invalid memory-copy length and heap out-of-bounds read/write; ngx_http_v2_send_chain deducts from both h2c->send_window and stream->send_window; affects 1.9.5-1.31.8 and reaches RCE serving static files"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-123007 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-123007 description (HTTP/2 flow-control window exceeding threshold → heap buffer overflow)"
+  },
+  {
+   "src": "https://cert-portal.siemens.com/productcert/html/ssa-935812.html",
+   "author": "Siemens ProductCERT",
+   "sha256": "",
+   "corroborates": "affected product matrix for the nginx2root CVEs"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

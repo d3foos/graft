@@ -1,0 +1,49 @@
+{
+  "id": "T-0002", "schema_version": 4, "record_version": 1,
+  "title": "JSON key / sort field spliced into a SQL identifier position (ORDER BY, column)",
+  "index_line": "T-0002 · SQL_EXEC · identifier-position injection via keys · blind error-iteration loop · corroborated",
+  "langs": { "origin": "node", "transferable": ["python", "php", "java", "dotnet", "ruby", "go"] },
+  "class": { "cwe": ["CWE-89"], "capec": [], "effect": "SQL_EXEC", "stage": "impact" },
+  "invariant_violated": "The app treats a JSON key or sort parameter as a data label; the SQL layer splices it into an identifier position that parameter binding cannot express.",
+  "mechanism": [
+    { "n": 1, "does": "attacker controls a KEY, not a value: sort/order_by/filter[<name>]/columns[]", "primitive": "UNTRUSTED_INPUT" },
+    { "n": 2, "does": "server maps the key to a SQL identifier", "primitive": "LOOKUP" },
+    { "n": 3, "does": "identifier spliced unbound — binding an identifier is impossible in every dialect", "primitive": "CONCAT" },
+    { "n": 4, "does": "DB parser error on unbalanced key becomes the oracle: break, fingerprint dialect, balance, refine", "primitive": "PARSE" },
+    { "n": 5, "does": "impact via CASE-in-ORDER-BY boolean flip or error-based extraction", "primitive": "READ" }
+  ],
+  "slots": {
+    "source.http.body": { "value": "JSON keys: sort, sort_by, orderBy, order, column, field, group_by, columns[], filter[<key>]" },
+    "sink.sql.concat": { "value": "identifier position (ORDER BY / dynamic WHERE / projection)", "equivalents": "vocab/equivalents/sink.sql.concat.json" },
+    "encoding.string": { "value": "trailing quote to break, then balanced close with dialect comment (name'-- -)" },
+    "oracle.error": { "value": "Unknown column / unterminated quoted string / Incorrect syntax near — the DB parser names your key" },
+    "guard.none": { "value": "keys are almost never allowlisted the way values are" }
+  },
+  "preconditions": [
+    { "kind": "runtime", "expr": "SQL backend in use", "check": { "kind": "grep", "spec": { "patterns": ["SELECT ", "sqlalchemy|Sequelize|gorm|PDO|mysqli|ActiveRecord"], "paths": ["."] } } },
+    { "kind": "dependency", "expr": "key-driven SQL surface present", "check": { "kind": "grep", "spec": { "patterns": ["ORDER BY|order_by|sort_by|sortField|columns\\[\\]|group_by"], "paths": ["src", "app", "routes", "controllers", "api"] } } },
+    { "kind": "reachability", "expr": "request keys reach the query builder", "check": { "kind": "grep", "spec": { "patterns": ["JSON\\.parse|req\\.body|Object\\.keys\\("], "paths": ["src", "app", "routes", "controllers"] } } },
+    { "kind": "auth", "expr": "varies — sort/filter params usually need standard user auth only" }
+  ],
+  "observables": {
+    "success": ["DB error on key with trailing quote, absent on the clean key", "balanced close parses clean while bare quote errored — the differential", "CASE-based ORDER BY flips row order on a true/false condition"],
+    "failure_like": ["keys allowlisted server-side — trailing quote yields no DB error", "no error at all: parameter is bound as a value elsewhere"],
+    "false_positive": ["error comes from the JSON parser, not the DB parser", "value-oriented scanner noise on the same endpoint (values bound separately — that surface is T-0001)"]
+  },
+  "transfer": {
+    "same_effect": ["vocab/equivalents/sink.sql.concat.json"],
+    "hazards": ["error-message dialects differ (MySQL vs pg vs MSSQL vs SQLite wording) — fingerprint before balancing", "value-oriented DAST misses this surface entirely"],
+    "non_transfers": ["endpoints where sort fields are hardcoded enums", "drivers that force-bind identifiers (rare; usually a builder DSL)"],
+    "confidence": { "node": 0.85, "python": 0.8, "php": 0.75, "java": 0.75, "dotnet": 0.75, "ruby": 0.75, "go": 0.7 }
+  },
+  "combines_with": ["T-0001"],
+  "probes": [ { "kind": "grep", "path": "probes/T-0002/grep.json" } ],
+  "evidence": { "status": "external_reported", "gate": "external_oracle", "runs": [], "target": "console playbook corpus" },
+  "provenance": [
+    { "src": "skill:structural-sqli", "author": "0security playbook corpus", "corroborates": "method detail (break/fingerprint/balance/refine loop)" },
+    { "src": "MITRE CWE-89", "author": "MITRE", "corroborates": "mechanism class in identifier position" }
+  ],
+  "trust": "corroborated", "confidence": { "curator": 0.8 },
+  "cost": { "attempts": 0, "wall_min": 0, "noise": "medium" },
+  "ttl_days": 365
+}

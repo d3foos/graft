@@ -1,0 +1,175 @@
+{
+  "id": "T-0054",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A safe copy function is only safe if the bound is the destination's size, not the input's length",
+  "index_line": "T-0054 \u00b7 MEM_WRITE \u00b7 strncpy(dest, src, strlen(src)) into a 256-byte stack buffer, pre-auth \u00b7 c/cpp \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-121",
+      "CWE-787"
+    ],
+    "effect": "MEM_WRITE",
+    "stage": "impact"
+  },
+  "invariant_violated": "Choosing the bounded copy instead of the unbounded one is treated as having handled the problem \u2014 a reviewer sees strncpy and moves on. But the third argument is the destination's capacity, and the code passed the source's length. The function was made safe in name and left exactly as dangerous in the one way that matters.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated client opens a session and supplies a protocol field whose length it chooses",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the handler measures the field with the standard length function and stores the value with its length",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the copy is issued into a fixed stack buffer using the measured source length as the bound",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 4,
+      "does": "the bound exceeds the destination, so the write continues past the buffer into adjacent stack variables",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the overwrite reaches the saved return address, and control flow is redirected",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "a binary protocol field negotiated before authentication \u2014 the length is the payload, the content is filler"
+    },
+    "sink.memory.copy": {
+      "value": "the bounded-copy call whose third argument is the wrong quantity"
+    },
+    "size.length": {
+      "value": "the measured source length standing in for the destination capacity \u2014 the single swapped operand"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the handler is reachable before authentication",
+      "check": {
+        "kind": "shell",
+        "spec": "timeout 5 nc HOST PORT </dev/null | head -c 120; echo; echo 'reachable if bytes returned'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "a bounded copy is called with a source-derived length instead of the destination's size",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "strncpy\\([^,]+,[^,]+,\\s*strlen\\(",
+            "strncpy\\([^,]+,[^,]+,\\s*[A-Za-z_]*[Ll]en",
+            "memcpy\\([^,]+,[^,]+,\\s*strlen\\("
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "build predates the vendor fix",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "compare the vulnerable and fixed binaries around the handler; a changed copy-length operand is the tell"
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "the service crashes or gains control flow from a single oversized field with no authentication",
+      "the crashing copy's length equals the supplied field length in a debugger",
+      "the same request with a short field is inert"
+    ],
+    "failure_like": [
+      "the length is clamped or compared against the destination size before the copy"
+    ],
+    "false_positive": [
+      "a crash in a different handler caused by malformed framing \u2014 confirm the faulting instruction is the copy",
+      "a crash that needs authentication first \u2014 that is a post-auth bug and changes the severity entirely"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.memory.copy.json"
+    ],
+    "hazards": [
+      "grep for the bounded functions and read the third argument; strncpy with a source length is the most common false sense of safety in C",
+      "strlcpy and snprintf also take the destination size \u2014 the same swapped-operand mistake defeats them",
+      "this is a pre-auth overflow on an edge appliance, so the patch window is the exposure window",
+      "distinct from T-0010 (attacker length sizing an allocation) and T-0041 (decoder output extent): here the code intended to bound and bounded the wrong thing"
+    ],
+    "non_transfers": [
+      "code that passes the destination size (the intended use)",
+      "languages where the copy carries both lengths"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "cpp": 0.85
+    }
+  },
+  "combines_with": [
+    "T-0010",
+    "T-0041"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "Ivanti Connect Secure before 22.7R2.5 (CVE-2025-0282)"
+  },
+  "provenance": [
+    {
+      "src": "sources/fc9b7c9e8b72cb7e-ivanti-watchtowr.txt",
+      "author": "watchTowr Labs exploitation walkthrough, CVE-2025-0282",
+      "sha256": "fc9b7c9e8b72cb7e6dd3a842d4ebe92ccbc9e908dfddb3347bf84931dbd12b29",
+      "corroborates": "the decompiled handler, dest[256], strncpy(dest, clientCapabilities, clientCapabilitiesLength), and the stack-to-return-address path"
+    },
+    {
+      "src": "https://forums.ivanti.com/s/article/Security-Advisory-Ivanti-Connect-Secure-Policy-Secure-ZTA-Gateways-CVE-2025-0282-CVE-2025-0283",
+      "author": "Ivanti (vendor advisory)",
+      "corroborates": "affected versions and fixed releases"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-0282 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-121 stack-based buffer overflow; pre-auth"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-01-08; EPSS 1.000"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

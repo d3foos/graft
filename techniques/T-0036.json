@@ -1,0 +1,204 @@
+{
+  "id": "T-0036",
+  "schema_version": 4,
+  "record_version": 3,
+  "title": "A value handed to a program as a positional argument is re-read as an instruction because it starts with a dash",
+  "index_line": "T-0036 \u00b7 EXEC \u00b7 a username reaches a positional argv slot; the receiver treats a leading dash as a transport directive \u00b7 c/rust/go/java/python \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "rust",
+      "go",
+      "java",
+      "python",
+      "perl"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-88",
+      "CWE-306"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A caller assumes that an argument placed after the options is data, because it is in a positional slot. But the receiving parser has a legacy rule for positionals that begin with a dash, and a username is attacker-chosen text \u2014 so 'positional' is a convention, not a guarantee, and one dash re-enters the option grammar.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker connects to the exposed service and supplies a value the front end will pass on as a positional argument",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the front end assembles an argv and execs the backend program, placing the attacker's value in a slot that comes after the flags",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 3,
+      "does": "the backend parser sees the value begins with a dash and applies its option/transport syntax instead of treating it as a name",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "the selected directive makes the backend read its *trusted* login parameters from a channel the attacker controls",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 5,
+      "does": "attacker-supplied fields replace the identity and policy values the front end intended to pass, so the session is granted the privileges it asked for \u2014 the authorization outcome follows the attacker's parameters",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 6,
+      "does": "the session escalates from read-only to full control of the device",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "a login field of a network service (SSH username, telnet/MAC field, RADIUS username) \u2014 a value the caller assumes is inert because it is 'just a name'"
+    },
+    "sink.exec.noshell": {
+      "value": "the exec/execv of a helper program whose argv is built from the request \u2014 argument injection, no shell involved"
+    },
+    "encoding.shell": {
+      "value": "a leading dash, and the directive letters the backend understands; nothing else is needed"
+    },
+    "guard.none": {
+      "value": "no `--` separator between options and positionals, and no validation that the value cannot begin with a dash"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a privileged front end builds an argv containing request-derived values",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "execl\\(|execv\\(|execve\\(|CreateProcess",
+            "argv\\[|/bin/|/nova/bin"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the parser of the exec'd program accepts dash-prefixed positionals as directives",
+      "check": {
+        "kind": "shell",
+        "spec": "call the helper directly with a dash-prefixed positional and see whether it changes behaviour instead of being treated as a name"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the value is attacker-chosen (a username or label) and not constrained to a safe character class",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "username|user_name|login",
+            "validate.*name|pattern.*[a-zA-Z]"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a username that begins with a dash changes the session's privileges rather than failing to authenticate",
+      "the backend reads its parameters from a channel the attacker supplied (a pty, a pipe, a file descriptor) instead of the front end",
+      "a read-only session becomes a full one without any credential change"
+    ],
+    "failure_like": [
+      "the caller inserts `--` before positionals, or rejects values starting with `-`",
+      "the backend has no dash-directive grammar for positionals"
+    ],
+    "false_positive": [
+      "an authentication failure for a dash-prefixed username \u2014 that is the safe behaviour; the bug needs a directive the parser accepts",
+      "privilege change caused by the credentials supplied, not by the argument \u2014 control for this with a benign dash value"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.noshell.json"
+    ],
+    "hazards": [
+      "argument injection is not command injection: metacharacters are irrelevant and the payload is a flag. Check for `--` before blaming quoting",
+      "the value crosses a process boundary, so the interesting parser is in the *next* binary \u2014 read its option grammar",
+      "legacy transports (read-your-parameters-from-fd-N) are the usual directive, and they exist for privileged-pipe designs",
+      "a silent vendor patch means diffing the binaries; the two changed symbols tell you which side of the boundary to look at"
+    ],
+    "non_transfers": [
+      "callers that pass `--` or use an argv array with the program itself exempted from parsing",
+      "backends with no positional directives"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.8,
+      "rust": 0.6,
+      "go": 0.6,
+      "java": 0.55,
+      "python": 0.55,
+      "perl": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0005",
+    "T-0022"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "MikroTik RouterOS SSH login path (CVE-2026-86060, 'MikroTrick' chain), fixed 7.23.4 / 7.24.2 / 6.49.21"
+  },
+  "provenance": [
+    {
+      "src": "sources/022fd528534b3432-mikrotik-npratley.txt",
+      "author": "npratley.net reverse-engineering of the RouterOS silent patch",
+      "sha256": "022fd528534b34329bc171f1a9ebde36f54ba91fcab2ff979608830599008a36",
+      "corroborates": "the execl into /nova/bin/login, the `-2` file-descriptor transport, the positional argv layout, and the symbol diff that localises the fix"
+    },
+    {
+      "src": "https://cert.pl/en/posts/2026/09/vulnerabilities-in-mikrotik-routeros-actively-exploited/",
+      "author": "CERT Polska (coordinated disclosure, 'MikroTrick')",
+      "corroborates": "six RouterOS vulnerabilities, the two-CVE chain, active exploitation against internet-exposed SSH, and the fixed releases"
+    },
+    {
+      "src": "https://mikrotik.com/supportsec/september-2026-vulnerability/",
+      "author": "MikroTik (vendor security bulletin)",
+      "corroborates": "affected versions and fixed releases 7.25beta3 / 7.24.2 / 7.23.4 / 6.49.21"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-86060 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-88, CVSS 3.1 9.8, 'argument-handling flaw in the SSH login'"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-09-10"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

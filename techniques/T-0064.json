@@ -1,0 +1,170 @@
+{
+  "id": "T-0064",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "An XML API whose parser still resolves external entities turns any file the service can read into an out-of-band disclosure channel",
+  "index_line": "T-0064 \u00b7 FILE_READ \u00b7 an unauthenticated XML API with external entities on by default: DOCTYPE + SYSTEM entity reads service files, OOB parameter entities exfiltrate them \u00b7 java \u00b7 corroborated",
+  "langs": {
+    "origin": "java",
+    "transferable": [
+      "java",
+      "php",
+      "python",
+      "node",
+      "dotnet"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-611"
+    ],
+    "effect": "FILE_READ",
+    "stage": "impact"
+  },
+  "invariant_violated": "The XML parser behind an API assumed nobody hostile would hand it a document, so DTD processing and external-entity resolution stayed enabled by default; the platform also assumed its own configuration files, certificates and keys would only ever be read by itself.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated client submits an XML message whose document carries a DOCTYPE with external entities to the provisioning interface (OCI-P)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the platform's XML parser processes the DTD as part of the document instead of rejecting it (entity resolution allowed by default)",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "an entity's SYSTEM identifier points at a server-side file; resolving it reads that file with the service account's privileges",
+      "primitive": "READ"
+    },
+    {
+      "n": 4,
+      "does": "blind variant: a parameter entity embeds the read bytes into a URL the parser then fetches, moving file contents out-of-band to the attacker",
+      "primitive": "CONNECT"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "an OCI XML message on the management/provisioning service (observed on XSP port 2208) \u2014 no session required"
+    },
+    "guard.none": {
+      "value": "no authentication on the XML interface and no DTD/external-entity restriction in the parser configuration"
+    },
+    "sink.file.read": {
+      "value": "the entity resolver's file read, keyed by the SYSTEM identifier inside the attacker's DOCTYPE"
+    },
+    "oracle.channel": {
+      "value": "blind cases exfiltrate through the parser's own fetch of a parameter-entity URL (OOB DNS/HTTP); reflected cases return bytes in the response"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the XML provisioning interface is reachable without authentication",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST:2208/ ; timeout 5 bash -c 'printf \"GET / HTTP/1.0\\r\\n\\r\\n\" | nc HOST 2208' | head -c 200"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the XML stack resolves external entities by default (no disallow-doctype-decl / external-entities switch)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "disallow-doctype-decl|EXTERNAL_GENERAL_ENTITIES|resolveExternalEntities|disable_entity_loader"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the platform release ships the vulnerable parser (BroadWorks R23 line in the observed campaign)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -I http://HOST:2208/ | head -5"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a DNS query or HTTP fetch arrives at the attacker host carrying bytes read from a server-side file",
+      "response or OOB channel contains data that exists only server-side (system identity keys, SSL credentials)"
+    ],
+    "failure_like": [
+      "parser rejects the DOCTYPE (DOCTYPE is disallowed / 400 on entity use)",
+      "authentication is demanded before any XML parsing"
+    ],
+    "false_positive": [
+      "the interface answering at all is reachability, not XXE \u2014 require the entity read demonstrated via reflected or OOB bytes",
+      "parser error text mentioning entities is a lead, not proof; match actual file bytes"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "any SOAP/XML-RPC/custom-XML API whose stack still allows DTDs \u2014 SOAP is XML, and legacy/telecom/embedded parsers are the residual exposure",
+      "the files worth reading are the service's own keys and configs: the observed chain used the platform identity key to impersonate components",
+      "blind XXE needs one egress path (the parser's own fetch); reflected XXE works where entity bytes land in an error or echo",
+      "detection: the request is one well-formed XML message \u2014 nothing looks like an attack until the OOB fetch fires"
+    ],
+    "non_transfers": [
+      "parsers configured with disallow-doctype-decl, entity limits or a no-network resolver",
+      "interfaces that authenticate before parsing"
+    ],
+    "confidence": {
+      "java": 0.9,
+      "php": 0.7,
+      "python": 0.7,
+      "node": 0.7,
+      "dotnet": 0.7
+    }
+  },
+  "combines_with": [],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Cisco BroadWorks XSP OCI XML parser (CVE-2026-20320; exploited in the wild \u2014 Operation Snowball entry point)"
+  },
+  "provenance": [
+    {
+      "src": "sources/34e851485fa794c8-cisco-sa-bworks-xxe.txt",
+      "author": "Cisco PSIRT (cisco-sa-bworks-xxe-uwUd7CEt)",
+      "sha256": "34e851485fa794c8091c239a5c99ac3b861577bb241f2ef046e956e3338a6bac",
+      "corroborates": "CVE-2026-20320 exists because external entity resolution is allowed by default in the OCI XML parser; an unauthenticated crafted OCI-P message reads sensitive files; CWE-611; CVSS 3.1 7.5 AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    {
+      "src": "sources/9fdab9a9d16a0332-malbearlabs-operation-snowball.txt",
+      "author": "MalBear Labs",
+      "sha256": "9fdab9a9d16a03328e2b45ea4e21bd8f50ebba9e18384d2539b354b420c1671e",
+      "corroborates": "in-the-wild use of CVE-2026-20320 as the campaign entry point: crafted OCI request to XSP port 2208 recovered the system identity private key and SSL credentials (XSP 23.0.1.1075)"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-20320 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2026-20320 description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-11-10"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0007",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "InvokerTransformer|CommonsCollections|commons-beanutils|__destruct|__wakeup|call_user_func|__reduce__",
+    "unserialize\\s*\\(|pickle\\.loads|ObjectInputStream|Marshal\\.load|BinaryFormatter|readObject\\s*\\(",
+    "Cookie|cookie|session|base64_decode|request\\.body|__VIEWSTATE"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

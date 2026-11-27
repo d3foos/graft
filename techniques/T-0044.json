@@ -1,0 +1,182 @@
+{
+  "id": "T-0044",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The protocol's environment negotiation is a trusted channel into a privileged helper's argv",
+  "index_line": "T-0044 \u00b7 AUTH_DECISION \u00b7 telnet ENVIRON USER becomes `login -f root`; no password is ever asked \u00b7 c/any-inetd-helper \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "perl",
+      "python",
+      "go"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-88",
+      "CWE-306"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A remote client's environment is assumed to be advisory data \u2014 TERM, DISPLAY, LANG \u2014 which the daemon passes to the login program so the session is set up usefully. But the login program's option grammar is in the same argv, so a value that begins with a dash is read as an option, and one of those options is 'this user is already authenticated'.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker negotiates the protocol's environment option and supplies a variable whose value is an option string plus a user",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the daemon assembles the login helper's command line, inserting the client-supplied environment value as an argument",
+      "primitive": "CONCAT"
+    },
+    {
+      "n": 3,
+      "does": "the helper's option parser sees the leading dash and applies the pre-authenticated-user option",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "the helper's pre-authenticated-user option marks the caller as already authenticated \u2014 no password is requested or checked \u2014 and a root session is established for a client that never authenticated",
+      "primitive": "AUTHZ_CHECK"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "the protocol's environment/variable negotiation (telnet ENVIRON, RFC 1572) \u2014 a pre-auth channel by design"
+    },
+    "sink.exec.noshell": {
+      "value": "the exec of the privileged login helper; the payload is an argv token, not a metacharacter"
+    },
+    "encoding.shell": {
+      "value": "`-<flag> <user>` as the environment value; the space is significant and the dash is the entire trick"
+    },
+    "guard.none": {
+      "value": "the daemon never validates the variable's value, and the helper has no `--` before client-derived arguments"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "a telnet (or equivalent inetd-style) service is reachable and spawns a login helper",
+      "check": {
+        "kind": "shell",
+        "spec": "ss -lntp | grep ':23\\\\b'; nc -w2 HOST 23 </dev/null | head -c 100"
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the daemon passes the negotiated environment into the helper's argv without filtering dash-prefixed values",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "login.*-f|execl.*login|ENVIRON|USER="
+          ],
+          "paths": [
+            "src",
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the build predates the fixed release (inetutils 2.8)",
+      "check": {
+        "kind": "shell",
+        "spec": "telnetd --version 2>/dev/null | head -1; dpkg -l inetutils-telnetd 2>/dev/null | tail -1"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a session is granted with no credential exchange at all \u2014 the password prompt never appears",
+      "the negotiated variable is visible in the daemon's argv (process listing or audit log)",
+      "the resulting shell has the privilege of the requested user, not the connecting one"
+    ],
+    "failure_like": [
+      "the daemon strips or rejects values containing spaces or leading dashes",
+      "the helper is invoked with `--` before client-derived arguments"
+    ],
+    "false_positive": [
+      "a successful login using real credentials \u2014 the tell is that no password was requested",
+      "a banner or refused connection proving the port is open \u2014 reachability, not bypass"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.noshell.json"
+    ],
+    "hazards": [
+      "environment negotiation is the classic forgotten input: TERM/DISPLAY/USER look like metadata and are sent pre-auth by design",
+      "the option grammar of the *helper* is what matters; read `login`, `su`, `sshd`-adjacent helpers rather than the daemon",
+      "argument injection again, but through an environment variable rather than a URL \u2014 the fourth distinct route in this store (see T-0036, T-0039, T-0005)",
+      "the two-patch history matters: the first fix filtered one variable, the second applied the same sanitiser to every path"
+    ],
+    "non_transfers": [
+      "daemons that never hand client environment to a privileged helper",
+      "helpers invoked with an explicit option terminator"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "cpp": 0.8,
+      "perl": 0.65,
+      "python": 0.6,
+      "go": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0036",
+    "T-0039"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "GNU Inetutils telnetd 1.9.3\u20132.7 (CVE-2026-24061), fixed 2.8"
+  },
+  "provenance": [
+    {
+      "src": "sources/fca4a788e1279df6-inetutils-redteam.txt",
+      "author": "redteam.ae analysis of CVE-2026-24061",
+      "sha256": "fca4a788e1279df64ddfc112e149060eb94bb90c39df8e312fdbfeb2238118b1",
+      "corroborates": "the USER value becoming `login(1)`'s `-f root` option, the affected range, and what each of the two patches changed"
+    },
+    {
+      "src": "https://www.labs.greynoise.io/grimoire/2026-01-22-f-around-and-find-out-18-hours-of-unsolicited-houseguests/index.html",
+      "author": "GreyNoise Labs (independent telemetry)",
+      "corroborates": "independent observation of exploitation attempts in the first 18 hours after disclosure"
+    },
+    {
+      "src": "http://www.openwall.com/lists/oss-security/2026/01/20/2",
+      "author": "oss-security (Openwall mailing list)",
+      "corroborates": "public disclosure thread and patch discussion"
+    },
+    {
+      "src": "MITRE/NVD CVE-2026-24061 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "'remote authentication bypass via a \"-f root\" value for the USER environment variable'; CWE-88; CVSS 3.1 9.8"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-01-26; EPSS 0.990"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

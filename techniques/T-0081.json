@@ -1,0 +1,194 @@
+{
+ "id": "T-0081",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The publish attestation proves which workflow minted the token, not which code ran in it — so malware in the test phase ships a perfectly attested release",
+ "index_line": "T-0081 · EXEC · PR-target cache poisoning → OIDC token lifted from the runner → attested malicious npm publish that self-propagates · node · corroborated",
+ "langs": {
+  "origin": "node",
+  "transferable": [
+   "node",
+   "python",
+   "java",
+   "ruby",
+   "php"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-506",
+   "CWE-829",
+   "CWE-345"
+  ],
+  "capec": [],
+  "effect": "EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "The registry's trust decision was 'did this token come from the publisher's release workflow?'. A token can be minted by any code executing in that workflow, including code the attacker got run during a test or cleanup step — provenance attested the pipeline identity, not the code identity.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a fork pull request drives a pull_request_target workflow, so attacker-influenced code executes with the base repository's privileged context"
+  },
+  {
+   "n": 2,
+   "primitive": "WRITE",
+   "does": "the job poisons the shared GitHub Actions cache across the fork/base trust boundary, carrying the payload into the trusted job"
+  },
+  {
+   "n": 3,
+   "primitive": "INVOKE",
+   "does": "during the test phase the payload runs and extracts a live OIDC token from the runner process memory (the workflow holds id-token: write)"
+  },
+  {
+   "n": 4,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the registry accepts the token because it is bound to the legitimate workflow file/ref (trusted publisher), not to the step that minted it"
+  },
+  {
+   "n": 5,
+   "primitive": "LOOKUP",
+   "does": "the defined publish step was skipped (tests had failed) but the crafted publish call goes straight to the registry, so 84 versions across 42 packages appear"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "installing an affected version resolves a malicious optionalDependency whose prepare lifecycle script runs a credential harvester that republishes every package the victim maintains"
+  }
+ ],
+ "slots": {
+  "source.env": {
+   "value": "the CI runner: workflow permissions, the shared Actions cache, and a mintable OIDC id-token"
+  },
+  "guard.signature": {
+   "value": "the registry's trusted-publisher/OIDC attestation — a proof of pipeline identity that says nothing about which code ran"
+  },
+  "delegate.tool": {
+   "value": "npm's prepare lifecycle: the package manager runs the dependency's install-time script on the developer's machine"
+  },
+  "sink.exec.shell": {
+   "value": "the install-time script executes attacker code (obfuscated router_init.js) with the developer's credentials in reach"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the release workflow uses id-token: write with pull_request_target and a shared cache",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "pull_request_target|id-token:\\s*write|actions/cache|npm publish"
+     ],
+     "paths": [
+      ".github/workflows"
+     ]
+    }
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "a published version of the package carries an install-time script that is not in the upstream sources",
+   "check": {
+    "kind": "shell",
+    "spec": "npm view PKG@VERSION scripts dist.tarball time --json 2>/dev/null | head -40"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "consumers install with lifecycle scripts enabled",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "ignore-scripts|--ignore-scripts"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a published version's tarball contains a prepare/postinstall script that fetches or decodes an external payload",
+   "the registry records the publish as provenance-attested from the legitimate workflow while the workflow's own publish step did not run"
+  ],
+  "failure_like": [
+   "the workflow requires environment approval on the OIDC-gated job, so test-phase code cannot mint the token",
+   "the registry rejects publishes from steps other than the declared one, or install scripts are disabled"
+  ],
+  "false_positive": [
+   "a package with legitimate postinstall scripts is normal — the signal is a script absent from the repository at the published tag, or a version published outside the workflow's own publish step",
+   "a provenance badge alone does not certify content; do not treat attestation as a clean bill of health"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any CI that mints short-lived publish/deploy tokens with the same job that runs untrusted code",
+   "cache poisoning crosses build matrices and jobs, so the poisoned artefact appears in the trusted job",
+   "self-propagation: the payload harvests the victim's own registry credentials and republishes their packages, so the blast radius is the maintainer graph"
+  ],
+  "non_transfers": [
+   "workflows that mint publish tokens only in a protected environment after tests pass",
+   "install-time scripts disabled across the fleet"
+  ],
+  "confidence": {
+   "node": 0.9,
+   "python": 0.7,
+   "java": 0.6,
+   "ruby": 0.6,
+   "php": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0038",
+  "T-0058"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "TanStack Router/Start npm packages, 2026-05-11 incident (CVE-2026-45321)"
+ },
+ "provenance": [
+  {
+   "src": "sources/3dee92cde2dd9695-tanstack-stepsecurity.txt",
+   "author": "StepSecurity (Ashish Kurmi)",
+   "sha256": "3dee92cde2dd9695c2902e042ccab78c8062a79d75da5ca8fa75f3fa47c7d455",
+   "corroborates": "detected and analysed the incident: 84 malicious versions of 42 @tanstack/* packages, self-spreading credential harvester, npm ecosystem propagation"
+  },
+  {
+   "src": "sources/bb500e9c90449446-tanstack-postmortem.txt",
+   "author": "TanStack (incident postmortem)",
+   "sha256": "bb500e9c90449446aff0ce443c6aab076a2c3402f1f83d4ad5b973ee9244d5ab",
+   "corroborates": "root cause: pull_request_target Pwn Request + GitHub Actions cache poisoning across the fork/base boundary + runtime memory extraction of an OIDC token, publishing via the OIDC trusted-publisher binding for release.yml although the defined publish step was skipped; install-time prepare script harvests credentials and republishes every package the victim maintains"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-45321 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-45321 description and affected versions"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2026-09-02"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

@@ -1,0 +1,194 @@
+{
+  "id": "T-0045",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "Three components, three normalizations: the front end decides authentication on a path the back end never opens",
+  "index_line": "T-0045 \u00b7 AUTH_DECISION \u00b7 nginx sets an auth header for a path, Apache re-normalizes to a different file \u00b7 any-proxy-chain \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "php",
+      "java",
+      "python",
+      "node",
+      "go"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-288",
+      "CWE-436",
+      "CWE-22"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A request is assumed to be one object that each layer agrees on. It is not: the front-end proxy normalizes the path to choose an access rule, and the back-end server normalizes the same bytes again to choose a file. Where the two normalizations differ, the rule is applied to one path and the script that runs is another.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker requests a path built so that two normalizers disagree \u2014 encoded octets, duplicate slashes, dot segments, case",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the front-end proxy normalizes the path, matches it against its location rules, and concludes this request needs no authentication",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the proxy records that conclusion as a header for the backend and forwards the *original* path",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 4,
+      "does": "the backend re-normalizes the same bytes to a different file and resolves it to a PHP script that expects to be protected",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 5,
+      "does": "the backend honours the proxy's header rather than re-deriving the decision, so the script executes for an unauthenticated caller",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 6,
+      "does": "the script performs an authenticated action on the attacker's behalf",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the request path \u2014 the payload is a normalization difference, not a traversal the backend would accept on its own"
+    },
+    "proxy.desync": {
+      "value": "the front-end/back-end disagreement \u2014 here about *which file* the path names, rather than where the request ends"
+    },
+    "encoding.path": {
+      "value": "`//`, `/.`, `%2e`, `/./`, case, and trailing-dot forms; the working value is whatever the two normalizers split on"
+    },
+    "guard.none": {
+      "value": "the authorization decision is transported as a header produced upstream and consumed downstream, with no re-derivation"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the management interface is served through two normalizing layers (a reverse proxy in front of an application server)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sI https://HOST/ | grep -iE 'server:|x-'; curl -s -o /dev/null -w '%{http_code}\\n' https://HOST/unauth/.//..%2findex.php"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the upstream's decision travels to the backend as a header rather than being re-evaluated",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "X-.*AuthCheck|X-Forwarded-.*(auth|user)|set \\$.*auth|proxy_set_header"
+          ],
+          "paths": [
+            "nginx",
+            "etc",
+            "conf"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the backend resolves a PHP script for a path the front end classified as unauthenticated",
+      "check": {
+        "kind": "shell",
+        "spec": "compare the file each layer resolves for a set of mutation payloads; a mismatch is the bug"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "an unauthenticated request returns a script's output rather than a login page",
+      "the same path fails when the proxy's location rule is tightened \u2014 the differential proves the rule is what was bypassed",
+      "requests that differ only in normalization reach different handlers with the same authorization verdict"
+    ],
+    "failure_like": [
+      "the backend re-derives authorization from its own view of the path",
+      "the proxy rejects or canonicalises the mutation before the backend sees it"
+    ],
+    "false_positive": [
+      "a login page returned with status 200 \u2014 read the body, not the code",
+      "an unauthenticated endpoint that is *meant* to be public (the static assets, the login handler itself)"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "the audit unit is (path mutations) \u00d7 (layers) \u2014 build a matrix and compare which file each layer resolves; that is a 20-minute test with curl",
+      "this class is invisible to source review because no single component is wrong: each normalizes consistently with itself",
+      "the fix is a re-derivation at the backend, not a better regex in the proxy",
+      "CWE-288 'alternate path or channel' is the right label and the right search: look for any endpoint reachable by a second route"
+    ],
+    "non_transfers": [
+      "single-layer servers that resolve and authorize in one step",
+      "chains whose backend re-checks authorization from its own resolution"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "php": 0.75,
+      "java": 0.7,
+      "python": 0.7,
+      "node": 0.7,
+      "go": 0.65
+    }
+  },
+  "combines_with": [
+    "T-0012",
+    "T-0039"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "PAN-OS management web interface, nginx + Apache + PHP (CVE-2025-0108)"
+  },
+  "provenance": [
+    {
+      "src": "sources/6beddf79b1318fa6-panos-slcyber.txt",
+      "author": "Searchlight Cyber (slcyber.io) research, CVE-2025-0108 finder",
+      "sha256": "6beddf79b1318fa601dfa89bca4b1299c85ea868b6097f7efc10a8e5d7e53ac7",
+      "corroborates": "the three-component architecture, the X-pan-AuthCheck header, nginx's location checks vs Apache's re-normalization, and the working payload"
+    },
+    {
+      "src": "https://www.bleepingcomputer.com/news/security/palo-alto-networks-tags-new-firewall-bug-as-exploited-in-attacks/",
+      "author": "BleepingComputer (press, independent)",
+      "corroborates": "independent reporting of in-the-wild exploitation"
+    },
+    {
+      "src": "https://security.paloaltonetworks.com/CVE-2025-0108",
+      "author": "Palo Alto Networks (vendor advisory)",
+      "corroborates": "affected versions and the fixed release"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-0108 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-306/288, 'unauthenticated attacker \u2026 can invoke certain PHP scripts'; CVSS 3.1 8.8"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-02-18; EPSS 0.986"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

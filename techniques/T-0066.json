@@ -1,0 +1,187 @@
+{
+  "id": "T-0066",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The path check validates where you point; the filesystem object decides where you land: a committed symlink makes the write follow it out of the sandbox",
+  "index_line": "T-0066 \u00b7 EXEC \u00b7 the requested path is legitimately in-repo so validation passes; the symlink already committed routes the write to .git/config (sshCommand) \u00b7 go \u00b7 corroborated",
+  "langs": {
+    "origin": "go",
+    "transferable": [
+      "go",
+      "node",
+      "python",
+      "ruby",
+      "c"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-59",
+      "CWE-22"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A path-validation check proves where you pointed, not where the write lands. The API validated that the requested path was inside the repository \u2014 but Git legitimately stores symlinks, and the filesystem, not the validator, chooses the destination when a write follows one.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "a user with repository rights commits a symlink into a repo they control, its target pointing outside the worktree (e.g. the server-side .git/config)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the file-modification API validates the requested path, which is legitimately inside the repository, so the traversal guard passes",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the check validated the path string, never the file it names \u2014 the entry is a pointer to an out-of-tree destination",
+      "primitive": "BYPASS",
+      "bypasses": "guard.resolve-check"
+    },
+    {
+      "n": 4,
+      "does": "the API writes attacker bytes through the symlink, overwriting the out-of-tree target",
+      "primitive": "WRITE"
+    },
+    {
+      "n": 5,
+      "does": "the overwritten file is .git/config: its core.sshCommand executes attacker commands at the next git operation",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.file.name": {
+      "value": "a symlink committed as an ordinary git object \u2014 the name is legal, the file it names is the escape hatch"
+    },
+    "source.http.body": {
+      "value": "the file-modification API call supplying the bytes to write"
+    },
+    "guard.resolve-check": {
+      "value": "the traversal validation added after the earlier path-traversal fix \u2014 correct for strings, blind to symlinks"
+    },
+    "sink.file.write": {
+      "value": "the write-through-symlink into the out-of-tree target (.git/config in the observed chain)"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "the file-modification API checks the requested path but not the resolved target of an existing entry",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "PutContents|createOrUpdateFile|EvalSymlinks|Lstat|O_NOFOLLOW"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "auth",
+      "expr": "any account with repository-creation rights (open registration was the default in the observed campaign)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' -H 'Authorization: token LOWPRIV' http://HOST:3000/api/v1/user"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the service is reachable and the repo web UI/API answers",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST:3000/"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a write to an in-repo path lands outside the repository root",
+      ".git/config gains core.sshCommand; the next git fetch/push executes it",
+      "campaign signature: fresh repos with random 8-character names holding a single symlink (700+ of ~1,400 exposed instances compromised in the wild)"
+    ],
+    "failure_like": [
+      "the API resolves the final target (EvalSymlinks/openat per component) and refuses the write",
+      "repository permissions deny the writer"
+    ],
+    "false_positive": [
+      "a ../ traversal is the older CVE-2024-55947 mechanism \u2014 this record requires an in-repo path whose resolved target escapes",
+      "reading through a symlink without a write is not this record"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "every 'edit a file in the repo' API \u2014 git-forge forks inherit the symlink semantics; wiki and attachment writers too",
+      "fix discipline from the patch review: O_NOFOLLOW only guards the trailing component \u2014 full safety needs openat() walking every component from the root",
+      "this class regresses: Gogs repeated it (CVE-2024-56731, CVE-2024-54148); each new write path (rename, merge, rebase) re-opens it",
+      "writes into config a privileged process honors (.git/config sshCommand, hook files) convert an out-of-tree write into execution"
+    ],
+    "non_transfers": [
+      "repositories that reject symlinks at receive time",
+      "APIs that only ever create new files (never follow existing entries)"
+    ],
+    "confidence": {
+      "go": 0.9,
+      "node": 0.7,
+      "python": 0.7,
+      "ruby": 0.65,
+      "c": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0006",
+    "T-0057"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Gogs < 0.13.4 (CVE-2025-8110; mass exploitation July 2025, fix v0.13.4 on 2026-01-23)"
+  },
+  "provenance": [
+    {
+      "src": "sources/0e06bd973287d450-wiz-gogs-cve-2025-8110.txt",
+      "author": "Wiz Research (Gili Tikochinski, Yaara Shriki)",
+      "sha256": "0e06bd973287d450940210287efe63116064ccbd6592f1a04d2cac30027010e5",
+      "corroborates": "the full chain: commit a symlink, PutContents writes through it out of the repo, .git/config sshCommand executes; open registration default; 700+ of ~1,400 exposed instances compromised; fix v0.13.4"
+    },
+    {
+      "src": "sources/40a44c4382237d23-openwall-gogs-thread-2025-12-11.txt",
+      "author": "oss-security thread (Jakub Wilk)",
+      "sha256": "40a44c4382237d23dd23914608aa5dc2eb8d7bd6ed84bd31210bf737ffe23c8b",
+      "corroborates": "community tracking of the disclosure and the fork exposure question (Gitea/Forgejo)"
+    },
+    {
+      "src": "sources/f838eb485ab52dac-openwall-gogs-thread-2026-01-17.txt",
+      "author": "oss-security thread (Michael Orlitzky, Collin Funk)",
+      "sha256": "f838eb485ab52dac9c58cf90edef00c6bcb711ec0f18ffb4057532a1c4569a9b",
+      "corroborates": "independent mechanism review of the fix: O_NOFOLLOW guards only the trailing component; TOCTOU remains on intermediate components \u2014 openat-per-component is the correct shape"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-8110 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CVE-2025-8110 description and CWE/CVSS"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-01-12"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

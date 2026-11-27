@@ -1,0 +1,175 @@
+{
+  "id": "T-0062",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "The client sends a serialized description of what the server should do, and the server binds it to types and calls",
+  "index_line": "T-0062 \u00b7 CODE_EXEC \u00b7 the RSC payload names modules and arguments; the decoder resolves and invokes them \u00b7 node/javascript \u00b7 corroborated",
+  "langs": {
+    "origin": "node",
+    "transferable": [
+      "node"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-502",
+      "CWE-470"
+    ],
+    "effect": "CODE_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A component wire format is treated as a data channel: the server framework wrote the encoder, so the decoder is trusted to read whatever it wrote. But the format carries *references* \u2014 module names, property paths, argument lists \u2014 and a decoder that resolves them faithfully lets the client describe an invocation rather than supply a value.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated request posts a serialized payload to a server-function endpoint (or to any route the RSC runtime decodes)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the decoder parses the payload into the framework's internal representation, including module references and argument lists",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "references are resolved against the server's module graph and materialised as callable values",
+      "primitive": "DESERIALIZE"
+    },
+    {
+      "n": 4,
+      "does": "the decoded structure points at a function the attacker chose, with arguments the attacker chose",
+      "primitive": "CALLBACK"
+    },
+    {
+      "n": 5,
+      "does": "the runtime invokes it while finishing hydration, before any authorization is applied to the described action",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 6,
+      "does": "the invoked chain reaches a process-spawning primitive",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "the multipart/JSON RSC payload \u2014 a serialized graph, not a form; every field is a reference"
+    },
+    "sink.deser.native": {
+      "value": "the framework's payload decoder, which resolves module and property references into live objects"
+    },
+    "guard.none": {
+      "value": "no allow-list of resolvable references, and the endpoint is unauthenticated by design (it serves the public page)"
+    },
+    "encoding.object-stream": {
+      "value": "the payload's own serialization syntax: reference markers, property paths, argument tuples"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "the app uses a framework or bundler that ships the vulnerable RSC packages",
+      "check": {
+        "kind": "shell",
+        "spec": "node -e \"const p=require('./package.json');console.log(p.dependencies)\" | grep -iE 'react|next|waku|react-router'"
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the resolved react-server-dom-* version is in the affected range",
+      "check": {
+        "kind": "shell",
+        "spec": "ls node_modules/react-server-dom-* -d 2>/dev/null; node -p \"require('react-server-dom-webpack/package.json').version\" 2>/dev/null"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "an RSC-capable route is internet-reachable (a page render is enough)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' https://HOST/ -H 'RSC: 1'"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a crafted payload produces a response containing the output of a server-side primitive",
+      "the effect appears even on routes with no server functions, when the app merely uses RSC",
+      "the request is a single POST with no credentials and no prior session"
+    ],
+    "failure_like": [
+      "the framework build includes the validation fix, or the app has no server-side React at all"
+    ],
+    "false_positive": [
+      "a generic 500 from a malformed payload \u2014 check whether the decoder ran before failing",
+      "a client-only React app: no server decode happens, so nothing to reach"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.deser.native.json"
+    ],
+    "hazards": [
+      "any client-server wire format that carries references rather than values has this shape; treat the decoder as an RPC surface",
+      "the endpoint is public by design, so there is no auth boundary to hide behind",
+      "the practical check is a version check plus one probe on a page route with an RSC header \u2014 cheap, do it first",
+      "distinct from T-0007 (a blob naming types in a language deserializer) and T-0026 (a validator executing code): here the *protocol* is the gadget surface"
+    ],
+    "non_transfers": [
+      "frameworks whose wire format carries only values, with references resolved server-side",
+      "deployments pinned to fixed react-server-dom-* versions"
+    ],
+    "confidence": {
+      "node": 0.9
+    }
+  },
+  "combines_with": [
+    "T-0007",
+    "T-0026"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "react-server-dom-webpack/parcel/turbopack 19.0.0-19.2.0 (CVE-2025-55182)"
+  },
+  "provenance": [
+    {
+      "src": "sources/4edad5c8e8f969a4-react-reactdev.txt",
+      "author": "React team security advisory, CVE-2025-55182",
+      "sha256": "4edad5c8e8f969a4e0e9cfd94ee9f1a59605afef0a7733d05987910fd5ea7738",
+      "corroborates": "the flaw in how React decodes payloads sent to React Server Function endpoints, the affected packages, and that RSC-only apps are also vulnerable"
+    },
+    {
+      "src": "http://www.openwall.com/lists/oss-security/2025/12/03/4",
+      "author": "oss-security (Openwall mailing list)",
+      "corroborates": "public disclosure thread with independent analysis"
+    },
+    {
+      "src": "https://www.facebook.com/security/advisories/cve-2025-55182",
+      "author": "Meta Product Security (parent CNA advisory)",
+      "corroborates": "CNA advisory record"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-55182 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "pre-authentication RCE; CVSS 10.0"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-12-05; EPSS 0.997"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

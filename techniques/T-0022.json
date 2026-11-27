@@ -1,0 +1,226 @@
+{
+  "id": "T-0022",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The same request bytes are parsed twice \u2014 once as HTTP, once as a command line \u2014 so a CLI-only option parser becomes remotely settable",
+  "index_line": "T-0022 \u00b7 CODE_EXEC \u00b7 argv populated from the query string reaches a CLI option reader with no SAPI check \u00b7 php/cgi-inherited \u00b7 corroborated",
+  "langs": {
+    "origin": "php",
+    "transferable": [
+      "php"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-94",
+      "CWE-20"
+    ],
+    "effect": "CODE_EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Code written to be reached only from the command line assumes that `argv` is the process's command line. With `register_argc_argv` on \u2014 the PHP default, and the default in the official Craft image \u2014 PHP fills `$_SERVER['argv']` from the query string, split on spaces. Every CLI-only option parser in the process is then remotely settable, and none of them checked `PHP_SAPI`.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker sends a query string whose space-separated tokens look like command-line options (`?--templatesPath=\u2026`)",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the runtime populates the request's argv from the query string because `register_argc_argv` is on, indistinguishable from a real CLI invocation",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 3,
+      "does": "the application bootstrap resolves its paths and settings through a CLI option reader that reads argv with no SAPI guard",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 4,
+      "does": "the attacker's option wins over the configured default, so a path that decides what code is loaded is now attacker-chosen",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 5,
+      "does": "wrapper choice matters: http:// and php:// fail an existence check (no stat support), but ftp:// supports stat",
+      "primitive": "BYPASS",
+      "bypasses": "guard.resolve-check"
+    },
+    {
+      "n": 6,
+      "does": "the remote resource is fetched and rendered as a template, so the attacker's template source executes in the engine",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 7,
+      "does": "the engine's sandbox denylists dangerous function *names* passed as filter arguments",
+      "primitive": "BYPASS",
+      "bypasses": "guard.sandbox"
+    }
+  ],
+  "slots": {
+    "source.http.request": {
+      "value": "the query string \u2014 the second parse of the same bytes; the payload is `?--option=value` and nothing else"
+    },
+    "sink.eval": {
+      "value": "the template render (or any CLI-configurable path that decides what gets loaded/evaluated)"
+    },
+    "guard.none": {
+      "value": "the missing `PHP_SAPI === 'cli'` check in the option reader; the existence check that was supposed to guard the path instead selects the wrapper"
+    },
+    "encoding.shell": {
+      "value": "argv token shape: `--flag`, `--flag=value`, `+token` \u2014 spaces (or `+`) are the argument separator, so a value containing a space splits"
+    },
+    "gadget.engine-escape": {
+      "value": "the indirect-invocation bypass of a name denylist: `sort('call_user_func')` calls a permitted name that then calls the forbidden one"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "register_argc_argv is on (PHP default; on in the official Craft Docker image; off on many shared hosts)",
+      "check": {
+        "kind": "shell",
+        "spec": "php -i | grep -i register_argc_argv; php -r 'var_dump(isset($_SERVER[\"argv\"]));'"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the application has a CLI option reader that is reachable during a web bootstrap (shared bootstrap for console and web)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "argv",
+            "cliOption|cli_option|getopt\\(|ConsoleArg|ArgvInput"
+          ],
+          "paths": [
+            "bootstrap",
+            "src",
+            "vendor",
+            "config",
+            "bin"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "a settable option decides a path that is included, required or read-and-evaluated (templates, config, migrations, storage)",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "templatesPath|configPath|vendorPath|basePath|storagePath",
+            "include\\s*\\(|require\\s*\\(|file_get_contents\\s*\\("
+          ],
+          "paths": [
+            "bootstrap",
+            "src"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "no PHP_SAPI guard anywhere on the option-reading path",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "PHP_SAPI|php_sapi_name"
+          ],
+          "paths": [
+            "bootstrap",
+            "src",
+            "vendor"
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "`?--templatesPath=<remote>` changes what the app loads \u2014 a template rendered from an attacker-controlled source returns attacker output",
+      "a bogus option (`?--configPath=/nonexistent`) provably breaks the app, proving argv is attacker-writable before any exploit is attempted",
+      "the same request is inert when register_argc_argv is off \u2014 the differential is the proof"
+    ],
+    "failure_like": [
+      "register_argc_argv is off \u2014 `$_SERVER['argv']` is absent and `?--flag` is inert",
+      "the option reader is only instantiated on a genuine CLI entry point (a separate binary that the web bootstrap never loads)",
+      "the existence check rejects every stream wrapper (or the engine refuses remote template sources)"
+    ],
+    "false_positive": [
+      "a `?--flag` request that 404s or 500s because the option simply does not exist \u2014 that shows argv is reachable, not that a dangerous option is",
+      "`--help`-style output reflected into the page without changing what is loaded",
+      "treating the resulting SSTI as the discovery when the argv reachability is the finding \u2014 they are two bugs and the report should say both"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.eval.json"
+    ],
+    "hazards": [
+      "this is a runtime footgun, so it recurs in any PHP application that shares one bootstrap between CLI and web \u2014 hunt for `argv` readers, not for Craft",
+      "the separator is a space (or `+`), so a value containing a space needs encoding; that constraint shapes every payload",
+      "the wrapper selection is the clever part: an existence check is not a security control, and `ftp://` supporting stat turns it into a selector"
+    ],
+    "non_transfers": [
+      "languages without the argv-from-query-string behaviour (Python/Node/Ruby WSGI servers do not populate a CLI argument vector from the query string)",
+      "PHP deployments with register_argc_argv=Off (many shared hosts and several distros) \u2014 the whole class dies there",
+      "CLI option readers guarded by PHP_SAPI"
+    ],
+    "confidence": {
+      "php": 0.9
+    }
+  },
+  "combines_with": [
+    "T-0004",
+    "T-0016"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "differential",
+    "runs": [],
+    "target": "Craft CMS 4.x/5.x with register_argc_argv=On (CVE-2024-56145), fixed 4.13.2 / 5.5.2"
+  },
+  "provenance": [
+    {
+      "src": "sources/10de060efabc4c60-assetnote-craft-cve-2024-56145.txt",
+      "author": "Assetnote / Searchlight Cyber research (Adam Kues)",
+      "sha256": "10de060efabc4c60afd1b273b291139d905d4077267a1a2b90550565e3be8639",
+      "corroborates": "the register_argc_argv behaviour, the unguarded cliOption reader, the ftp:// wrapper vs file_exists, the Twig sort('call_user_func') denylist bypass, all with requests and responses"
+    },
+    {
+      "src": "https://github.com/craftcms/cms/security/advisories/GHSA-2p6p-9rc9-62j9",
+      "author": "Craft CMS (vendor advisory GHSA-2p6p-9rc9-62j9)",
+      "corroborates": "affected condition ('php.ini has register_argc_argv enabled'), fixed versions, the disable-register_argc_argv workaround"
+    },
+    {
+      "src": "https://github.com/Chocapikk/CVE-2024-56145",
+      "author": "Chocapikk (public PoC)",
+      "corroborates": "the payload shape in practice: `?--templatesPath=ftp://\u2026` plus an FTP server serving a malicious template"
+    },
+    {
+      "src": "MITRE/NVD CVE-2024-56145 record (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-94, CVSS 3.1 AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-06-02, due 2025-06-23; SSVC automatable=yes"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.9
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

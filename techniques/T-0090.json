@@ -1,0 +1,194 @@
+{
+ "id": "T-0090",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "A patch applier writes into a bare repository, where a file path is a hook: the write namespace includes executable code",
+ "index_line": "T-0090 · EXEC · diffpatch applies a patch twice → add/add collision → three-way checkout writes hooks/post-index-change → hook runs · go · corroborated",
+ "langs": {
+  "origin": "go",
+  "transferable": [
+   "go",
+   "python",
+   "node",
+   "java",
+   "ruby",
+   "php",
+   "rust"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-94",
+   "CWE-829",
+   "CWE-73"
+  ],
+  "capec": [],
+  "effect": "EXEC",
+  "stage": "impact"
+ },
+ "invariant_violated": "The patch handler assumed a patch can only add or modify content: paths are data, and a throwaway clone is inert. But the clone is a bare repository, whose root is $GIT_DIR — so a path such as hooks/post-index-change is not content at all, it is a program Git will run the next time it writes the index.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a user with repository write access (obtainable through default open registration) submits a crafted patch to the diffpatch API"
+  },
+  {
+   "n": 2,
+   "primitive": "PARSE",
+   "does": "the handler applies the patch inside a shared bare temporary clone using --cached"
+  },
+  {
+   "n": 3,
+   "primitive": "COMPARE",
+   "does": "submitting the same patch twice creates an add/add collision, so Git takes its three-way fallback path instead of the simple apply"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "the fallback checks the indexed path out; in a bare clone that path can be hooks/post-index-change"
+  },
+  {
+   "n": 5,
+   "primitive": "INVOKE",
+   "does": "Git invokes the hook while writing the index"
+  },
+  {
+   "n": 6,
+   "primitive": "EXEC",
+   "does": "repository-controlled content runs as the Gitea service account"
+  }
+ ],
+ "slots": {
+  "source.http.body": {
+   "value": "the diffpatch API request body: patch content whose paths are attacker-chosen"
+  },
+  "sink.file.write": {
+   "value": "the checkout of an indexed path inside the shared bare clone — a write that lands in $GIT_DIR"
+  },
+  "sink.exec.shell": {
+   "value": "Git executing hooks/post-index-change while writing the index"
+  },
+  "encoding.path": {
+   "value": "the path hooks/<name> is a filename in one namespace and an executable hook in the bare-repository namespace"
+  },
+  "guard.none": {
+   "value": "no restriction that patched paths stay outside $GIT_DIR/hooks, and no isolation of the temporary clone"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the Gitea instance is reachable and its version is below 1.27.1",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s http://HOST/api/v1/version | head -c 120"
+   }
+  },
+  {
+   "kind": "auth",
+   "expr": "an account can be created (default open registration) and can create a repository",
+   "check": {
+    "kind": "shell",
+    "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST/user/sign_up; curl -s http://HOST/api/v1/settings/api | head -c 200"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the diffpatch handler exists and applies patches in a bare clone",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "diffpatch|PatchDiff|hooks/post-index-change"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a hook file appears in the shared bare clone's hooks directory",
+   "a command from the hook runs as the Gitea service account (callback or file written outside the repo)"
+  ],
+  "failure_like": [
+   "the second identical patch is rejected without triggering a three-way fallback",
+   "patched paths are rejected when they resolve inside $GIT_DIR/hooks"
+  ],
+  "false_positive": [
+   "a normal patch applying cleanly is not this bug — the collision plus checkout is required",
+   "a hook file inside a *non-bare* working tree is inert; the bare clone is what makes it executable"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any service that applies user-supplied patches, diffs or archives inside a repository it also treats as code",
+   "bare repositories put hooks/ and config at the root, so 'a file in the repo' and 'a program' are the same namespace",
+   "shared temporary clones carry state between requests, which is what makes the double-apply collision reachable"
+  ],
+  "non_transfers": [
+   "patch application in a separate working tree with hooks disabled (core.hooksPath set away)",
+   "services that reject patches touching reserved paths"
+  ],
+  "confidence": {
+   "go": 0.85,
+   "python": 0.7,
+   "node": 0.7,
+   "java": 0.65,
+   "ruby": 0.65,
+   "php": 0.65,
+   "rust": 0.6
+  }
+ },
+ "combines_with": [
+  "T-0014",
+  "T-0084"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Gitea before 1.27.1, diffpatch API (CVE-2026-60004)"
+ },
+ "provenance": [
+  {
+   "src": "sources/b7cc2a6531215614-gitea-ghsa-rcr6.txt",
+   "author": "Gitea Security Team (GHSA-rcr6-4jqh-j84m)",
+   "sha256": "b7cc2a65312156149b2fe4cb7e11f74f523a094410628fcc8b338b06f3e2e86c",
+   "corroborates": "CVE-2026-60004: the diffpatch endpoint applies attacker patches in a shared bare temporary clone; submitting the same patch twice creates an add/add collision and Git's three-way fallback checks the indexed path out despite --cached; in a bare clone the root is $GIT_DIR so an executable entry named hooks/post-index-change becomes a live Git hook, executed while writing the index"
+  },
+  {
+   "src": "sources/89b8321520eb47ea-gitea-poc-0xblackash.md",
+   "author": "0xBlackash (independent PoC)",
+   "sha256": "89b8321520eb47ea92275325042a5fd065f83d1c59d8fb81f252df1d69c87541",
+   "corroborates": "independent reproduction and writeup: crafted patches abuse Git hook execution during patch application in the diffpatch endpoint, yielding command execution as the Gitea service account; notes default open registration lets an unauthenticated visitor obtain the required repository write access"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-60004 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-60004 description (RCE via diffpatch API through Git hook installation)"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.8
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0011",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "\\.well-known/jwks|jwks\\.json|/api/keys|public\\.pem",
+    "jsonwebtoken|jwt\\.verify|jwt\\.decode|express-jwt|jjwt|firebase\\\\JWT|golang-jwt|JWT\\.decode",
+    "Authorization|Bearer|req\\.headers"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "conf",
+    "public"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

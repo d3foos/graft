@@ -1,0 +1,184 @@
+{
+  "id": "T-0048",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The BMC decides whether a request came from the host or the network by reading a header",
+  "index_line": "T-0048 \u00b7 AUTH_DECISION \u00b7 `X-Server-Addr`/`Host` classification stands in for network position on a Redfish interface \u00b7 c/any-BMC \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "go",
+      "python"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-290",
+      "CWE-287"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "A management controller has two very different callers \u2014 the host it sits in, and the operator on the network \u2014 and it tells them apart by looking at the request. Network position is the only signal it cannot be lied to about, and it is the one signal the code does not use: it prefers a header the caller writes.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unauthenticated attacker sends a management request with `X-Server-Addr` or `Host` set to describe the host itself",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the interface parses the header and classifies the request as originating from the host side",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "host-side requests are treated as already trusted, so no session or credential is required",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the Redfish operations proceed against the controller as an authenticated administrator",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 5,
+      "does": "the attacker reaches firmware write / reset / shell surfaces the controller exposes to its local host",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.header": {
+      "value": "`X-Server-Addr`, `Host`, `X-Forwarded-*` \u2014 a header that a *proxy or host* is expected to set and a client can also set"
+    },
+    "header.forwarding": {
+      "value": "the trust boundary for forwarding headers: which ones the front end overwrites and which it passes through"
+    },
+    "guard.none": {
+      "value": "no check that the request actually arrived on the internal interface (source address, mTLS, per-interface listener)"
+    },
+    "sink.exec.shell": {
+      "value": "the privileged controller surface reached after the classification passes"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the management interface is reachable from an untrusted network path",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -sk -o /dev/null -w '%{http_code}\\n' https://HOST/redfish/v1/Systems"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the authentication decision consults a request header for host/peer classification",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "X-Server-Addr|X-Forwarded-For|Host:|peer.*addr|remote_addr"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the header is accepted from the client rather than overwritten by a front end",
+      "check": {
+        "kind": "shell",
+        "spec": "send two requests that differ only in the header value and compare the authorization verdicts"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a Redfish request with a spoofed host header returns data or performs an action that requires authentication",
+      "the same request without the header is refused \u2014 the header is the switch",
+      "the effect needs no credentials at all"
+    ],
+    "failure_like": [
+      "the interface classifies the caller by its actual source address or a TLS client identity",
+      "a front end overwrites the header before the service sees it"
+    ],
+    "false_positive": [
+      "a 401 on the Redfish root \u2014 that is the interface working",
+      "a public read-only Redfish resource answering without auth (some are unauthenticated by design)"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "this is the header-trust class applied to *network position*: any 'are you internal?' check that reads a header is the same bug",
+      "BMCs sit outside the OS and often outside the EDR \u2014 compromise here is host-level and persistent, which is why the impact is not 'an API'",
+      "inventory the listeners: the same controller frequently exposes the interface on more than one network, and only one of them is meant to be internal",
+      "distinct from T-0045 (path normalization) and T-0046 (missing check): here the check exists and is fooled"
+    ],
+    "non_transfers": [
+      "interfaces that bind the internal-facing service to a separate listener or require mTLS from the host agent",
+      "proxies that always overwrite forwarding headers"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.8,
+      "go": 0.7,
+      "python": 0.7
+    }
+  },
+  "combines_with": [
+    "T-0035",
+    "T-0045"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "AMI MegaRAC SPx BMC firmware (CVE-2024-54085)"
+  },
+  "provenance": [
+    {
+      "src": "sources/7dbf963440d31134-megarac-eclypsium.txt",
+      "author": "Eclypsium research, CVE-2024-54085 (BMC&C Part 3)",
+      "sha256": "7dbf963440d3113429af31d3d2d2ba1c3eaf6fb92d0fe421298878a3b59af506",
+      "corroborates": "the Redfish Host Interface header spoofing (X-Server-Addr / Host), the 'believes the request came from the host' mechanism, and the impact chain"
+    },
+    {
+      "src": "https://arstechnica.com/security/2025/06/active-exploitation-of-ami-management-tool-imperils-thousands-of-servers/",
+      "author": "Ars Technica (independent reporting)",
+      "corroborates": "independent coverage of in-the-wild exploitation against servers"
+    },
+    {
+      "src": "https://www.networkworld.com/article/4013368/ami-megarac-authentication-bypass-flaw-is-being-exploitated-cisa-warns.html",
+      "author": "Network World (independent reporting)",
+      "corroborates": "independent confirmation of CISA's exploitation notice"
+    },
+    {
+      "src": "MITRE/NVD CVE-2024-54085 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-290; 'authentication bypass by spoofing'"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-06-25; EPSS 0.607"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

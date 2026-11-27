@@ -1,0 +1,198 @@
+{
+  "id": "T-0028",
+  "schema_version": 4,
+  "record_version": 2,
+  "title": "The protocol state machine validates the message against the grammar but not against the session's authentication state",
+  "index_line": "T-0028 \u00b7 EXEC \u00b7 a channel request is dispatched during the pre-auth phase; auth is a flag nobody consulted \u00b7 erlang/c/python/ruby \u00b7 corroborated",
+  "langs": {
+    "origin": "erlang",
+    "transferable": [
+      "erlang",
+      "c",
+      "python",
+      "ruby",
+      "node"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-306",
+      "CWE-862"
+    ],
+    "capec": [
+      "CAPEC-115"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "A protocol implementation is assumed to reject a message that is not legal *for this session's state*, because it validates that the message is legal *for the protocol*. Those are different checks: a well-formed channel-open plus channel-request is syntactically valid at any time, and if the handler is dispatched on message type alone, 'not authenticated yet' is simply a state nobody consulted.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker completes the transport handshake and sends a channel request carrying a command, without submitting any credential",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the server parses the message; it is well-formed and legal for the protocol at this point in the exchange",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the connection handler dispatches on message type, and the authentication state is carried in a flag that this path never reads",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the channel-request handler is reached in the pre-authentication phase \u2014 the session's authorization state exists but the dispatch never consults it",
+      "primitive": "BYPASS",
+      "bypasses": "guard.session-state"
+    },
+    {
+      "n": 5,
+      "does": "the request's payload is handed to the command executor, which runs it as the service account",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.protocol": {
+      "value": "any binary protocol with a pre-auth phase and per-session state (SSH userauth, MQTT CONNECT, AMQP open, an RPC handshake, a custom framing)"
+    },
+    "sink.exec.shell": {
+      "value": "the post-authentication handler that executes a command \u2014 reached from a pre-auth message"
+    },
+    "oracle.channel": {
+      "value": "the response to the request itself is the oracle: a well-formed reply (or command output) before any credential proves the dispatch happened"
+    },
+    "guard.session-state": {
+      "value": "the per-session authorization state; the bug is that the dispatcher selects the handler by message type and never consults it"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "reachability",
+      "expr": "the service exposes the protocol listener to the attacker",
+      "check": {
+        "kind": "shell",
+        "spec": "ss -lntp | grep -E ':(22|2222|5672|1883)\\b'; nc -w2 HOST PORT </dev/null && echo open"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "the implementation dispatches channel/session requests by message type before asserting the authenticated state",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "ssh_connection|channel_request|is_authenticated|userauth|handle_msg",
+            "state == authenticated|authenticated == true"
+          ],
+          "paths": [
+            "src",
+            "lib",
+            "apps"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "build predates the fixed release (Erlang/OTP < 27.3.3 / 26.2.5.11 / 25.3.2.20)",
+      "check": {
+        "kind": "shell",
+        "spec": "erl -noshell -eval 'io:format(\"~s~n\",[erlang:system_info(otp_release)]),halt().' 2>/dev/null || cat releases/start_erl.data 2>/dev/null"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a reply to a channel-request arrives before any authentication exchange, or the requested command's side effect appears",
+      "the exchange works with no userauth packets at all \u2014 the attacker never sends a username"
+    ],
+    "failure_like": [
+      "the server closes the connection with a protocol error when a channel request arrives pre-auth",
+      "the handler checks an authentication flag before dispatch and refuses"
+    ],
+    "false_positive": [
+      "a transport-level reply (banner, key exchange) proving the listener is up \u2014 that is the handshake, not the bug",
+      "a connection reset interpreted as 'patched' when a proxy or rate-limiter caused it",
+      "testing only against the vendor's default config on a platform where the SSH app is not even started"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "this is a state-machine bug, so the audit unit is the (message type \u00d7 session state) matrix, not the message parser; enumerate states and see which handlers are reachable from each",
+      "auth state is usually a boolean on a connection record; the bug appears wherever the dispatcher is written before the guard is added",
+      "protocol research pays here: the message that is legal-but-premature is the whole exploit, and fuzzers that only send malformed messages never find it",
+      "fixes add a guard at dispatch; any other path that bypasses the dispatcher (direct handler call, extension hook) re-opens the same hole"
+    ],
+    "non_transfers": [
+      "servers whose dispatcher is a table keyed by (state, message) \u2014 the illegal-in-this-state case has no entry",
+      "protocols with no pre-auth phase at all"
+    ],
+    "confidence": {
+      "erlang": 0.9,
+      "c": 0.6,
+      "python": 0.6,
+      "ruby": 0.55,
+      "node": 0.55
+    }
+  },
+  "combines_with": [
+    "T-0012",
+    "T-0021"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Erlang/OTP SSH server < OTP-27.3.3 / 26.2.5.11 / 25.3.2.20 (CVE-2025-32433)"
+  },
+  "provenance": [
+    {
+      "src": "sources/51d82a4592e8bceb-erlang-ghsa.txt",
+      "author": "Erlang/OTP security advisory GHSA-37cp-fgq5-7wc2 (vendor)",
+      "sha256": "51d82a4592e8bceb2d4194abb9dd9d835c582a8ad07011b2c6622a25077a9e5c",
+      "corroborates": "unauthenticated RCE via SSH protocol message handling, affected and fixed versions, and the finder credit (Ruhr University Bochum)"
+    },
+    {
+      "src": "https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-erlang-otp-ssh-xyZZy",
+      "author": "Cisco Product Security",
+      "corroborates": "independent: 'a flaw in the handling of SSH messages during the authentication phase', plus their own affected-product analysis"
+    },
+    {
+      "src": "https://github.com/ProDefense/CVE-2025-32433",
+      "author": "ProDefense (public PoC)",
+      "corroborates": "working exploit \u2014 pre-auth channel request reaches command execution, independently of vendor and Cisco"
+    },
+    {
+      "src": "http://www.openwall.com/lists/oss-security/2025/04/16/2",
+      "author": "oss-security (Openwall mailing list)",
+      "corroborates": "public disclosure record"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-32433 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-306, CVSS 3.1 10.0 AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-06-09; EPSS 0.989"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

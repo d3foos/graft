@@ -1,0 +1,27 @@
+{
+  "kind": "grep",
+  "technique": "T-0003",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "fetch\\(|axios|urlopen|HttpClient|http\\.Get|curl_exec|Guzzle|requests\\.",
+    "isPrivateIP|allowlist|allowedHosts|whitelist|ssrf|private.?ip",
+    "webhook|avatar|import.?url|preview|baseURL|callback|fromUrl"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

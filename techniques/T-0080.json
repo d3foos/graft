@@ -1,0 +1,188 @@
+{
+ "id": "T-0080",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "The login helper reads its credential record from a descriptor the client names, and the caller wired that descriptor to the client",
+ "index_line": "T-0080 · AUTH_DECISION · SSH rekey skips auth, then username '-2' makes the login helper read the trusted record from the client's terminal · c · corroborated",
+ "langs": {
+  "origin": "c",
+  "transferable": [
+   "c",
+   "cpp",
+   "go",
+   "rust",
+   "java"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-306",
+   "CWE-88",
+   "CWE-863"
+  ],
+  "capec": [],
+  "effect": "AUTH_DECISION",
+  "stage": "impact"
+ },
+ "invariant_violated": "The login helper assumed its argv came from a trusted local parent: a user name of '-2' is an instruction meaning 'read the credential record from descriptor 2'. The SSH service connected that descriptor to the client's session terminal, so an unauthenticated client supplied the record the helper treated as a trusted local statement of identity and policy.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "an unauthenticated SSH client requests a rekey; completing it moves the connection into the connection-protocol phase although no user has authenticated"
+  },
+  {
+   "n": 2,
+   "primitive": "BYPASS",
+   "bypasses": "guard.session-state",
+   "does": "the phase transition is not gated on the session having an assigned policy, so the client opens a session channel and sends an exec request"
+  },
+  {
+   "n": 3,
+   "primitive": "INVOKE",
+   "does": "the SSH service spawns RouterOS's login helper with the client-supplied user name as a command-line argument"
+  },
+  {
+   "n": 4,
+   "primitive": "PARSE",
+   "does": "the helper interprets a leading '-' as control syntax; '-2' selects descriptor 2 as the source of the trusted login record instead of its normal local input"
+  },
+  {
+   "n": 5,
+   "primitive": "READ",
+   "does": "descriptor 2 on the helper is the client's session terminal, so the attacker writes the record the helper believes came from a trusted local process"
+  },
+  {
+   "n": 6,
+   "primitive": "AUTHZ_CHECK",
+   "does": "the helper installs the attacker-named identity and the supplied policy mask, yielding an administrative session without a password or key"
+  }
+ ],
+ "slots": {
+  "source.protocol": {
+   "value": "the SSH transport: a rekey request from an unauthenticated client, then a session channel whose user name is attacker-chosen"
+  },
+  "guard.session-state": {
+   "value": "the connection-protocol dispatcher's failure to require an assigned policy before dispatching connection-layer requests"
+  },
+  "sink.exec.noshell": {
+   "value": "the login helper is exec'd with the user name as an argv element; a leading dash turns data into an instruction (descriptor selector)"
+  },
+  "encoding.shell": {
+   "value": "the '-N' token is an argument encoding the helper interprets, not a literal user name"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "reachability",
+   "expr": "the SSH service is reachable and accepts a session channel",
+   "check": {
+    "kind": "shell",
+    "spec": "timeout 8 ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=none -o ConnectTimeout=5 HOST exit 2>&1 | head -3"
+   }
+  },
+  {
+   "kind": "dependency",
+   "expr": "the build predates 7.23.4 (dispatcher policy check) or 7.23.4+ (login-helper argv hardening) as applicable",
+   "check": {
+    "kind": "shell",
+    "spec": "timeout 8 ssh -o StrictHostKeyChecking=no HOST 2>&1 | head -2; printf 'check RouterOS version via SNMP/API or /system/resource/print\\n'"
+   }
+  },
+  {
+   "kind": "input",
+   "expr": "the login helper is reachable with an attacker-chosen argv from an unauthenticated connection",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "open_session|exec_request|channel_request|policy.*mask|login"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "a session channel opens and an exec request is dispatched before any authentication",
+   "the console reports the administrator identity and the full policy mask although no credential was presented"
+  ],
+  "failure_like": [
+   "the dispatcher refuses connection-layer requests until a policy is assigned (patched 7.23.4)",
+   "the login helper rejects user names beginning with '-' or containing control bytes"
+  ],
+  "false_positive": [
+   "an SSH banner or a pre-auth 'none' auth failure is not the bypass — require a session channel plus an exec that the device executed",
+   "a read-only prompt is not administrative identity; compare the policy mask against a known full set"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any service that passes an untrusted principal name as argv to a privileged helper",
+   "helpers that accept '-N' as 'read my credentials from descriptor N' (a legacy local-IPC idiom)",
+   "stage one needs only a protocol phase-transition bug — rekey, STARTTLS, or any renegotiation that re-enters the state machine"
+  ],
+  "non_transfers": [
+   "helpers that take the principal on stdin or via a fixed structure with an explicit length",
+   "protocol stacks that bind the phase transition to an authenticated session object"
+  ],
+  "confidence": {
+   "c": 0.85,
+   "cpp": 0.7,
+   "go": 0.6,
+   "rust": 0.6,
+   "java": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0028",
+  "T-0036"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "MikroTik RouterOS 7.x (and 6.x for stage one), SSH service + login helper (CVE-2026-67279, 'MikroTrick')"
+ },
+ "provenance": [
+  {
+   "src": "sources/7cc746fceefa2997-mikrotik-bishopfox.txt",
+   "author": "Bishop Fox (MikroTrick research)",
+   "sha256": "7cc746fceefa29975152a435079d25015fba437772983aee04a04891eb548616",
+   "corroborates": "CVE-2026-67279 chain: completing a client-requested SSH rekey moves the connection into the connection-protocol phase with no authenticated identity; the login helper is then spawned with the client username as argv, a username of -2 selects descriptor 2 as the trusted login record, and that descriptor is the client terminal — full policy mask installed without authentication"
+  },
+  {
+   "src": "sources/235e743336a211ac-mikrotik-certpl.txt",
+   "author": "CERT Polska (Slawomir Rozbicki)",
+   "sha256": "235e743336a211ac993e901404ac137f9193b841f5896ecca97cbb321766057b",
+   "corroborates": "independent discovery and coordination: CVE-2026-67279 — RouterOS SSH enters the connection protocol after a client-requested rekey even though user authentication was never attempted, allowing an unauthenticated client to open a session channel and send an exec request"
+  },
+  {
+   "src": "MITRE/NVD CVE-2026-67279 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2026-67279 description, CWE-306 and CVSS"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2026-11-18"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.9
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

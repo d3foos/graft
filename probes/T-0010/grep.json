@@ -1,0 +1,26 @@
+{
+  "kind": "grep",
+  "technique": "T-0010",
+  "note": "candidate-site probe, grep confidence only \u2014 never proves reachability",
+  "patterns": [
+    "memcpy|strcpy|strcat|malloc\\(|kmalloc|recv\\(|read\\([^)]*len",
+    "recv\\(|read\\(|ioctl|netlink|parse|decode"
+  ],
+  "paths": [
+    "src",
+    "app",
+    "lib",
+    "routes",
+    "controllers",
+    "vendor",
+    "services"
+  ],
+  "oracle_ladder": [
+    "static",
+    "local_repro",
+    "oob_callback",
+    "timing",
+    "crash",
+    "blind"
+  ]
+}

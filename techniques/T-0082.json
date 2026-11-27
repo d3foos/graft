@@ -1,0 +1,187 @@
+{
+ "id": "T-0082",
+ "schema_version": 4,
+ "record_version": 1,
+ "title": "Insert and evict build the cache key from the same name in different encodings, so the delete misses and the object is freed while its entry survives",
+ "index_line": "T-0082 · MEM_WRITE · ANSI-vs-Unicode cache-key asymmetry in Acrobat ESObjects: eviction miss → dangling entry → UAF · cpp · corroborated",
+ "langs": {
+  "origin": "cpp",
+  "transferable": [
+   "cpp",
+   "c",
+   "java",
+   "dotnet",
+   "go",
+   "rust"
+  ]
+ },
+ "class": {
+  "cwe": [
+   "CWE-416",
+   "CWE-838",
+   "CWE-664"
+  ],
+  "capec": [],
+  "effect": "MEM_WRITE",
+  "stage": "impact"
+ },
+ "invariant_violated": "The cache assumed that the name used to insert an entry and the name used to evict it denote the same key. Insertion preserves the string's original encoding (ANSI or Unicode); eviction builds a Unicode-only key. The delete therefore misses, the object is freed, and the entry keeps pointing at it.",
+ "mechanism": [
+  {
+   "n": 1,
+   "primitive": "UNTRUSTED_INPUT",
+   "does": "a crafted PDF carries embedded JavaScript that names a data ESObject representing an embedded file/data stream"
+  },
+  {
+   "n": 2,
+   "primitive": "LOOKUP",
+   "does": "the name is hashed into a cache_key that retains the name's original encoding — ANSI or Unicode — exactly as it appeared in the document"
+  },
+  {
+   "n": 3,
+   "primitive": "PARSE",
+   "does": "the eviction path constructs its cache_key in Unicode only, so an entry inserted with an ANSI key is never matched"
+  },
+  {
+   "n": 4,
+   "primitive": "WRITE",
+   "does": "the data ESObject is destroyed while the cache entry holding its pointer is left behind"
+  },
+  {
+   "n": 5,
+   "primitive": "READ",
+   "does": "a later access to the same JavaScript object finds the surviving cache entry and returns the freed pointer as if it were live"
+  },
+  {
+   "n": 6,
+   "primitive": "INVOKE",
+   "does": "attacker-shaped heap reuse puts controlled data where the dangling ESObject is dereferenced, turning the stale reference into an arbitrary write and code execution"
+  }
+ ],
+ "slots": {
+  "source.protocol": {
+   "value": "a PDF with embedded JavaScript that names a data ESObject (the name encoding is attacker-chosen)"
+  },
+  "lifetime.object": {
+   "value": "the freed data ESObject whose pointer survives in the object cache — the use-after-free core"
+  },
+  "encoding.string": {
+   "value": "ANSI versus Unicode encoding of the same cache key on the insert path versus the evict path"
+  },
+  "guard.none": {
+   "value": "no encoding normalisation before key construction and no liveness check before dereferencing the cached pointer"
+  }
+ },
+ "preconditions": [
+  {
+   "kind": "dependency",
+   "expr": "the reader's JavaScript engine exposes data ESObjects and resolves them through a name-keyed cache",
+   "check": {
+    "kind": "grep",
+    "spec": {
+     "patterns": [
+      "ESObject|cache_key|EScript|data ESObject"
+     ],
+     "paths": [
+      "."
+     ]
+    }
+   }
+  },
+  {
+   "kind": "runtime",
+   "expr": "the installed build predates the fixed release for the product line",
+   "check": {
+    "kind": "shell",
+    "spec": "strings -a /path/to/Acrobat/Contents/MacOS/AdobeAcrobat 2>/dev/null | grep -m3 -E 'EScript|ESObject' || printf 'verify reader build number against the vendor matrix\\n'"
+   }
+  },
+  {
+   "kind": "input",
+   "expr": "the document can reference the same object by an ANSI-encoded and a Unicode-encoded name",
+   "check": {
+    "kind": "static",
+    "spec": "inspect the PDF's /Names and /EmbeddedFiles dictionaries for a data-object name that differs only by string encoding"
+   }
+  }
+ ],
+ "observables": {
+  "success": [
+   "the freed ESObject is still returned from the cache after its lifetime ended (crash with a controlled pointer, or a stable heap-feng-shui pattern)"
+  ],
+  "failure_like": [
+   "the cache normalises the name encoding before both insert and evict",
+   "the object is reference-counted so eviction cannot free it while an entry exists"
+  ],
+  "false_positive": [
+   "a crash on opening a malformed PDF is not this bug — require the freed object to be reachable through the cache and the crash address to correlate with attacker-shaped heap data",
+   "a JavaScript error about a missing data object means the lookup failed, i.e. the opposite behaviour"
+  ]
+ },
+ "transfer": {
+  "same_effect": [],
+  "hazards": [
+   "any cache keyed by an attacker-supplied string where the key is compared byte-wise but the object namespace treats encodings as equivalent",
+   "insert/evict asymmetry is the general shape: two code paths building the same logical key differently",
+   "the cache keeps the object alive from the consumer's point of view while the owner has already destroyed it"
+  ],
+  "non_transfers": [
+   "caches that canonicalise keys once at the boundary",
+   "languages with managed references where the entry itself holds a strong reference"
+  ],
+  "confidence": {
+   "cpp": 0.85,
+   "c": 0.75,
+   "java": 0.6,
+   "dotnet": 0.6,
+   "go": 0.5,
+   "rust": 0.5
+  }
+ },
+ "combines_with": [
+  "T-0010"
+ ],
+ "probes": [],
+ "evidence": {
+  "status": "external_reported",
+  "gate": "external_oracle",
+  "runs": [],
+  "target": "Adobe Acrobat and Reader DC (EScript.api ESObject cache), CVE-2020-9715 / ZDI-20-991"
+ },
+ "provenance": [
+  {
+   "src": "sources/6b4b18ed92e5acc5-acrobat-exodus.txt",
+   "author": "Exodus Intelligence",
+   "sha256": "6b4b18ed92e5acc53f1e0f3a71009bcbf20dde89a6ce4f5b904ed8e44ab5ade9",
+   "corroborates": "CVE-2020-9715 analysis: ESObject cache keys keep the original ANSI or Unicode name encoding on insertion, but eviction builds a Unicode-only key, so an ANSI-keyed entry is not evicted and its data ESObject is freed while the cache pointer survives — use-after-free reachable from embedded PDF JavaScript"
+  },
+  {
+   "src": "sources/193ee19765fb17bc-acrobat-zdi.txt",
+   "author": "Zero Day Initiative (ZDI-20-991)",
+   "sha256": "193ee19765fb17bc231f5e793c992c4e7bcdfa366b5f94bebff44166308a6e3a",
+   "corroborates": "independent advisory: use-after-free in the handling of ESObject data objects — the flaw is the failure to validate that an object still exists before operating on it"
+  },
+  {
+   "src": "MITRE/NVD CVE-2020-9715 (offline grype DB, synced 2026-11-20)",
+   "author": "MITRE / NIST NVD",
+   "sha256": "",
+   "corroborates": "CVE-2020-9715 description, CWE-416 and affected versions"
+  },
+  {
+   "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+   "author": "CISA (KEV)",
+   "sha256": "",
+   "corroborates": "added to KEV 2026-11-18"
+  }
+ ],
+ "trust": "corroborated",
+ "confidence": {
+  "curator": 0.8
+ },
+ "cost": {
+  "attempts": 0,
+  "wall_min": 0,
+  "noise": "none (offline knowledge)"
+ },
+ "ttl_days": 365
+}

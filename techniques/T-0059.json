@@ -1,0 +1,188 @@
+{
+  "id": "T-0059",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A privileged enumerator matches programs by path pattern and then executes them",
+  "index_line": "T-0059 \u00b7 EXEC \u00b7 root-run service discovery regex-matches binaries and runs each with `-v` \u00b7 c/any-inventory-agent \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "python",
+      "go",
+      "ruby"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-426",
+      "CWE-267"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "An inventory/discovery agent is assumed to be read-only: it looks at the machine and reports. But identifying a program means asking it for its version, and asking means executing. A privileged agent that decides what counts as a program by matching a path pattern hands the unprivileged user both halves of the exploit \u2014 they choose the path and the contents.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "an unprivileged local user places an executable at a path that matches the agent's service pattern",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the privileged agent (running as root, or via a root-owned tunnel to the hypervisor) walks the filesystem and applies its pattern",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "the path matches, so the agent treats the file as a service binary and selects the version command for it",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the agent executes the attacker's file with that command, in its own privileged context",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 5,
+      "does": "the file's code runs as root before any version output is parsed",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.env": {
+      "value": "the local filesystem namespace \u2014 the input is where the attacker can write, not a network request"
+    },
+    "fs.path.join": {
+      "value": "the search-path resolution that decides which files match the pattern"
+    },
+    "guard.none": {
+      "value": "no ownership check, no allow-list of trusted directories, no signature on what it executes"
+    },
+    "sink.exec.noshell": {
+      "value": "the agent's execution of a discovered binary to obtain its version"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a privileged component enumerates local programs and executes them to fingerprint them",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "get_version|--version|-v\\\"|exec.*version|popen\\(.*version"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "input",
+      "expr": "the matching rule is a broad pattern over paths the unprivileged user can write",
+      "check": {
+        "kind": "static",
+        "spec": {
+          "method": "read the regex/pattern used for service matching and test whether a world-writable directory satisfies it"
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the discovery runs with more privilege than the attacker (root, or through a root tunnel)",
+      "check": {
+        "kind": "shell",
+        "spec": "ps -eo user,cmd | grep -iE 'vmtoolsd|aria|discovery' | grep -v grep"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a binary the user created is executed by a root-owned process, evidenced by its side effect",
+      "the version string returned to the management plane comes from the attacker's file",
+      "no interaction from an administrator is needed \u2014 the discovery runs on its own schedule"
+    ],
+    "failure_like": [
+      "the enumerator only inspects known package metadata rather than executing discovered paths",
+      "it refuses binaries not owned by root or not in package-managed directories"
+    ],
+    "false_positive": [
+      "a user-installed tool appearing in an inventory listing \u2014 reporting is not executing",
+      "a crash from a malformed version output: the execution already happened, so treat it as the finding"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.noshell.json"
+    ],
+    "hazards": [
+      "any 'discover what is installed' agent has this shape: asset inventory, EDR telemetry, monitoring plugins, package auditors",
+      "the pattern is the vulnerability: a regex over paths is a whitelist the attacker can join by writing a file",
+      "the trigger is a schedule, not a request, so this can look non-reproducible in a lab \u2014 wait for the run",
+      "distinct from T-0047 (ordering inside a chroot) and T-0036 (argv re-read): here the privilege is fine and the *selection* is attacker-influenced"
+    ],
+    "non_transfers": [
+      "agents that resolve versions from package databases rather than by executing files",
+      "enumerators restricted to root-owned, package-managed directories"
+    ],
+    "confidence": {
+      "c": 0.85,
+      "cpp": 0.8,
+      "python": 0.7,
+      "go": 0.7,
+      "ruby": 0.65
+    }
+  },
+  "combines_with": [
+    "T-0047",
+    "T-0036"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "open-vm-tools service discovery / VMware Aria Operations SDMP (CVE-2025-41244)"
+  },
+  "provenance": [
+    {
+      "src": "sources/7338f00961b4727b-aria-nviso.txt",
+      "author": "NVISO research, CVE-2025-41244 (in-the-wild zero-day)",
+      "sha256": "7338f00961b4727b1b69d8666a06a5cf7b4a8fa6cf167cc6084b7198c5cfe70b",
+      "corroborates": "the get_version function taking a regex pattern and a version command, the broad path match, and execution of non-system binaries as privileged"
+    },
+    {
+      "src": "http://www.openwall.com/lists/oss-security/2025/09/29/10",
+      "author": "oss-security (Openwall mailing list)",
+      "corroborates": "public disclosure thread"
+    },
+    {
+      "src": "https://support.broadcom.com/web/ecx/support-content-notification/-/external/content/SecurityAdvisories/0/28352",
+      "author": "Broadcom / VMware (vendor advisory)",
+      "corroborates": "affected products and fixed versions"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-41244 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-267 privilege defined with unsafe actions; local privilege escalation"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-10-30; EPSS 0.164"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.85
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

@@ -1,0 +1,204 @@
+{
+  "id": "T-0040",
+  "schema_version": 4,
+  "record_version": 3,
+  "title": "A field that is present but unset is never initialised, and the response echoes whatever was in that memory",
+  "index_line": "T-0040 \u00b7 AUTH_DECISION \u00b7 presence check stands in for assignment; the unset struct member is reflected, leaking session tokens (an uninitialised-memory INFO_LEAK whose use is session hijack \u2014 also search INFO_LEAK) \u00b7 c/perl/python/java \u00b7 corroborated",
+  "langs": {
+    "origin": "c",
+    "transferable": [
+      "c",
+      "cpp",
+      "perl",
+      "python",
+      "java",
+      "php"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-457",
+      "CWE-125",
+      "CWE-287"
+    ],
+    "effect": "AUTH_DECISION",
+    "stage": "impact"
+  },
+  "invariant_violated": "Parsing is assumed to fully populate the structure it returns: if a field is present in the request, its destination has a value. But 'present' and 'has a value' are different facts, and a parser that checks only presence leaves the destination untouched. From then on the field holds whatever the allocator last left there \u2014 and any code that copies it out, logs it, or puts it in a response is now publishing memory.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the attacker posts the login form with the username parameter present but carrying no value",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 2,
+      "does": "the parser sees the field and records that it is present, so it never enters the branch that would assign it",
+      "primitive": "PARSE"
+    },
+    {
+      "n": 3,
+      "does": "the structure that maps the request is emitted with that member left exactly as allocated \u2014 uninitialised, not empty",
+      "primitive": "COMPARE"
+    },
+    {
+      "n": 4,
+      "does": "the backend builds its authentication XML from that structure and copies the member into the response as-is, up to the first zero byte",
+      "primitive": "READ"
+    },
+    {
+      "n": 5,
+      "does": "the response carries a run of process memory, which on a busy VPN concentrator includes other sessions' tokens",
+      "primitive": "AUTHZ_CHECK"
+    },
+    {
+      "n": 6,
+      "does": "repeating the request harvests enough tokens to hijack an authenticated session \u2014 an information leak that becomes an authentication bypass",
+      "primitive": "INVOKE"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "a form field that is *present without a value* \u2014 the payload is an absence, which is why input filters and big-payload probes never see it"
+    },
+    "sink.file.read": {
+      "value": "the copy-out of the structure member into the response/XML builder \u2014 the over-read happens at the serializer, not in the parser"
+    },
+    "lifetime.object": {
+      "value": "the uninitialised struct member: allocated once, never written for this request, read anyway"
+    },
+    "oracle.channel": {
+      "value": "the response body itself \u2014 the leaked bytes come back, so extraction needs no timing or error oracle"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "dependency",
+      "expr": "a request-to-structure binding that checks presence separately from assigning the value",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "hasField|has_field|containsKey|isset\\(.*\\[|in_array\\(.*key",
+            "= parse_|strdup\\(.*value"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the unset member reaches an output path (XML response, log line, error message) without being re-checked",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "<InitialValue>|snprintf.*%s|strcat\\(|xml.*value"
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    },
+    {
+      "kind": "runtime",
+      "expr": "the process handles concurrent sessions in the same address space, so the leaked bytes are other users' secrets",
+      "check": {
+        "kind": "shell",
+        "spec": "send the empty field repeatedly on a lab instance with a second live session and check whether the responses differ in content"
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a response field contains bytes the request never supplied, and the content changes between requests",
+      "the value disappears when the field is omitted entirely and returns when it is present-but-empty \u2014 that asymmetry is the bug",
+      "harvested bytes include tokens or session identifiers usable as another user"
+    ],
+    "failure_like": [
+      "the binder assigns an empty value on presence, or the structure is zeroed before parsing"
+    ],
+    "false_positive": [
+      "reflection of the empty field as an empty string \u2014 the safe behaviour",
+      "a response containing cached data from the same session \u2014 reproduce with two sessions before claiming cross-user leakage"
+    ]
+  },
+  "transfer": {
+    "same_effect": [],
+    "hazards": [
+      "the bug lives in the gap between the parser's contract and its implementation, so reading either alone will pass it \u2014 compare what the struct looks like for (omitted) vs (present-empty)",
+      "the leak is amplified by concurrency: the value is whatever the previous occupant of that heap left, so exploitation is statistical, not deterministic",
+      "the sanitizer that keeps being proposed for this class (zero-fill the struct) is a language-level fix; the copy-out is the sink to audit",
+      "response-type validation ('the XML looks well-formed') is not validation \u2014 the garbage can be well-formed"
+    ],
+    "non_transfers": [
+      "memory-safe languages where an unset member is nil/null and the serializer refuses or emits nothing",
+      "parsers that treat missing and empty identically and always write the destination"
+    ],
+    "confidence": {
+      "c": 0.9,
+      "cpp": 0.85,
+      "perl": 0.6,
+      "python": 0.4,
+      "java": 0.4,
+      "php": 0.5
+    }
+  },
+  "combines_with": [
+    "T-0034",
+    "T-0019"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "Citrix NetScaler ADC / NetScaler Gateway as Gateway or AAA virtual server (CVE-2025-5777, CitrixBleed 2)"
+  },
+  "provenance": [
+    {
+      "src": "sources/9681fe323a767260-citrix-watchtowr.txt",
+      "author": "watchTowr Labs (CitrixBleed-2 analysis)",
+      "sha256": "9681fe323a767260200f0867473158a7c6cfc2532dfb2e2513ad2a8060ddee2c",
+      "corroborates": "the login parameter present-without-value, the hasField-only check, the uninitialised backend member, and the response reflecting heap memory"
+    },
+    {
+      "src": "https://horizon3.ai/attack-research/attack-blogs/cve-2025-5777-citrixbleed-2-write-up-maybe/",
+      "author": "Horizon3.ai attack research (independent)",
+      "corroborates": "independent reproduction and exploitation guidance for session-token harvesting"
+    },
+    {
+      "src": "https://doublepulsar.com/citrixbleed-2-exploitation-started-mid-june-how-to-spot-it-f3106392aa71",
+      "author": "Kevin Beaumont (doublepulsar, independent)",
+      "corroborates": "in-the-wild timeline: exploitation began mid-June, before public detail"
+    },
+    {
+      "src": "https://support.citrix.com/support-home/kbsearch/article?articleNumber=CTX693420",
+      "author": "Citrix (vendor advisory CTX693420)",
+      "corroborates": "'insufficient input validation leading to memory overread' on Gateway/AAA virtual servers; fixed builds"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-5777 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-125, CVSS 3.1 9.3 AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2025-07-10; EPSS 0.999"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}

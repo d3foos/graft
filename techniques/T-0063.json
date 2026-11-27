@@ -1,0 +1,184 @@
+{
+  "id": "T-0063",
+  "schema_version": 4,
+  "record_version": 1,
+  "title": "A development server that assumed loopback binds to every interface, and its convenience endpoint is unauthenticated",
+  "index_line": "T-0063 \u00b7 EXEC \u00b7 Metro's /open-url accepts a POST that runs a command, on a server bound to 0.0.0.0 \u00b7 node \u00b7 corroborated",
+  "langs": {
+    "origin": "node",
+    "transferable": [
+      "node",
+      "python",
+      "ruby",
+      "go"
+    ]
+  },
+  "class": {
+    "cwe": [
+      "CWE-306",
+      "CWE-1327",
+      "CWE-1188"
+    ],
+    "effect": "EXEC",
+    "stage": "impact"
+  },
+  "invariant_violated": "Developer tooling is assumed to be local: it listens on a port for the developer's own machine, so nobody thought about who else could reach it. But the default bind address is *all interfaces*, and the endpoints exist to do convenient things like open a URL \u2014 which on a desktop means handing a string to the shell.",
+  "mechanism": [
+    {
+      "n": 1,
+      "does": "the developer runs the tool's development server, which binds to all interfaces by default",
+      "primitive": "NORMALIZE"
+    },
+    {
+      "n": 2,
+      "does": "the server exposes helper endpoints with no authentication, including one that opens a URL on the host",
+      "primitive": "LOOKUP"
+    },
+    {
+      "n": 3,
+      "does": "an attacker who can reach the port posts a value to that endpoint",
+      "primitive": "UNTRUSTED_INPUT"
+    },
+    {
+      "n": 4,
+      "does": "the handler passes the value to the platform's URL/command opener, which interprets shell syntax",
+      "primitive": "INVOKE"
+    },
+    {
+      "n": 5,
+      "does": "the command runs as the developer on a machine that holds source, tokens and credentials",
+      "primitive": "EXEC"
+    }
+  ],
+  "slots": {
+    "source.http.body": {
+      "value": "a JSON body with a `url`/`target` field \u2014 no token, no origin check"
+    },
+    "sink.exec.shell": {
+      "value": "the platform's open-a-URL helper, which on Windows resolves through cmd.exe"
+    },
+    "guard.none": {
+      "value": "no authentication, no origin check, and no restriction of the bind address"
+    },
+    "header.forwarding": {
+      "value": "the Host/Origin headers are the only things that could distinguish a local caller, and they are not consulted"
+    }
+  },
+  "preconditions": [
+    {
+      "kind": "runtime",
+      "expr": "the tool version is affected and its dev server binds broadly",
+      "check": {
+        "kind": "shell",
+        "spec": "ss -lntp 2>/dev/null | grep -E ':(8081|19000|19001)\\b'; npx react-native --version 2>/dev/null"
+      }
+    },
+    {
+      "kind": "reachability",
+      "expr": "the port is reachable from the attacker's position (shared network, container host, VPN)",
+      "check": {
+        "kind": "shell",
+        "spec": "curl -s -o /dev/null -w '%{http_code}\\n' http://HOST:8081/status"
+      }
+    },
+    {
+      "kind": "dependency",
+      "expr": "an unauthenticated helper endpoint performs a host action",
+      "check": {
+        "kind": "grep",
+        "spec": {
+          "patterns": [
+            "/open-url|open-url|openUrl|shell\\.open|start "
+          ],
+          "paths": [
+            "."
+          ]
+        }
+      }
+    }
+  ],
+  "observables": {
+    "success": [
+      "a POST to the helper endpoint spawns a shell child process on the developer machine",
+      "the server's status endpoint answers from a host that is not the developer's",
+      "the process tree shows cmd.exe or a shell under the dev-server process"
+    ],
+    "failure_like": [
+      "the server binds to 127.0.0.1 only, or the endpoint requires a token"
+    ],
+    "false_positive": [
+      "the dev server answering from another machine \u2014 that is reachability; the finding needs command execution",
+      "a firewall or container boundary that blocks the port: establish reachability before claiming it"
+    ]
+  },
+  "transfer": {
+    "same_effect": [
+      "vocab/equivalents/sink.exec.shell.json"
+    ],
+    "hazards": [
+      "every dev server in the chain is a candidate: bundlers, hot-reload servers, mock APIs, storybook, debug ports, notebook kernels",
+      "the default bind address is the whole bug \u2014 check `ss -lntp` on a developer machine and count what listens on 0.0.0.0",
+      "these hold no auth because their threat model was 'my own laptop'; on a shared network or a container host they are remote code execution",
+      "distinct from T-0058 (install-time hook) and T-0038 (CI tag): this one is a *listening service*, discovered by scanning rather than by pinning"
+    ],
+    "non_transfers": [
+      "dev servers that bind to loopback by default and require a token for host actions",
+      "isolated developer networks where the port is genuinely unreachable"
+    ],
+    "confidence": {
+      "node": 0.9,
+      "python": 0.65,
+      "ruby": 0.6,
+      "go": 0.6
+    }
+  },
+  "combines_with": [
+    "T-0030",
+    "T-0058"
+  ],
+  "probes": [],
+  "evidence": {
+    "status": "external_reported",
+    "gate": "external_oracle",
+    "runs": [],
+    "target": "React Native Community CLI Metro dev server (CVE-2025-11953, 'Metro4Shell')"
+  },
+  "provenance": [
+    {
+      "src": "sources/d44ff6fed08a40eb-metro-vulncheck.txt",
+      "author": "VulnCheck research, Metro4Shell (CVE-2025-11953)",
+      "sha256": "d44ff6fed08a40ebee25d9c7fccaebf1d41e690225c17abd6df26153b53a0305",
+      "corroborates": "the default external bind, the unauthenticated /open-url endpoint, and in-the-wild exploitation with evasion measures"
+    },
+    {
+      "src": "https://jfrog.com/blog/cve-2025-11953-critical-react-native-community-cli-vulnerability",
+      "author": "JFrog Security Research (independent)",
+      "corroborates": "independent technical analysis of the same endpoint"
+    },
+    {
+      "src": "https://github.com/react-native-community/cli/commit/15089907d1f1301b22c72d7f68846a2ef20df547",
+      "author": "react-native-community (vendor patch)",
+      "corroborates": "the fix"
+    },
+    {
+      "src": "MITRE/NVD CVE-2025-11953 (offline grype DB, synced 2026-11-20)",
+      "author": "MITRE / NIST NVD",
+      "corroborates": "CWE-78; the Metro server binding to external interfaces"
+    },
+    {
+      "src": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "author": "CISA (KEV)",
+      "corroborates": "actively exploited; KEV added 2026-02-05; EPSS 0.940"
+    }
+  ],
+  "trust": "corroborated",
+  "confidence": {
+    "curator": 0.88
+  },
+  "cost": {
+    "attempts": 0,
+    "wall_min": 0,
+    "noise": "none (offline knowledge)"
+  },
+  "ttl_days": 365
+}
