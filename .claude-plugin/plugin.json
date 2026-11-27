@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "graft",
   "version": "1.0.0",
-  "description": "Offline, stdlib-only technique-transfer library for security research: slot-parameterised vulnerability mechanisms, execution-verified sink equivalence tables, trust gating, and an append-only outcome ledger.",
+  "description": "A compact, growing security knowledge skill for AI agents — distill CVE techniques through research or hands-on testing and transfer them across stacks to uncover new attack vectors.",
   "author": {
     "name": "Abdulrahman Almuhairi",
     "url": "https://github.com/d3foos"

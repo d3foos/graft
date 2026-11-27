@@ -1,6 +1,6 @@
 interface:
-  display_name: "GRAFT Technique Transfer"
-  short_description: "Offline technique-transfer DB and equivalence tables."
+  display_name: "GRAFT"
+  short_description: "Compact, growing CVE distillation & transfer skill for agents."
   icon_small: "./assets/logo.svg"
   icon_large: "./assets/logo.svg"
   brand_color: "#0F766E"

@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graft-tdb"
 version = "1.0.0"
-description = "GRAFT — offline, stdlib-only technique-transfer library and Agent Skill for security research"
+description = "GRAFT — compact, growing CVE exploit distillation and transfer skill for AI security agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"

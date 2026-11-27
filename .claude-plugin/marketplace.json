@@ -6,14 +6,14 @@
     "url": "https://github.com/d3foos"
   },
   "metadata": {
-    "description": "GRAFT — offline technique-transfer library and Agent Skill by Abdulrahman Almuhairi.",
+    "description": "GRAFT — compact, growing CVE exploit distillation and transfer skill for AI agents by Abdulrahman Almuhairi.",
     "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "graft",
       "source": "./",
-      "description": "Offline technique-transfer library for security research: slot-parameterised vulnerability mechanisms, execution-verified sink equivalence tables, trust gating, and negative-results ledger.",
+      "description": "A compact, growing security knowledge skill for AI agents — distill CVE techniques through research or hands-on testing and transfer them across stacks to uncover new attack vectors.",
       "version": "1.0.0",
       "author": {
         "name": "Abdulrahman Almuhairi",

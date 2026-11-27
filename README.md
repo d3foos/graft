@@ -4,7 +4,7 @@
 [![CI](https://github.com/d3foos/graft/actions/workflows/ci.yml/badge.svg)](https://github.com/d3foos/graft/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-teal.svg)](pyproject.toml)
 
-**GRAFT** is an offline, zero-dependency technique-transfer knowledge store and cross-ecosystem Agent Skill by **Abdulrahman Almuhairi**. It models exploitation mechanisms as compact, slot-parameterised records paired with execution-verified sink-equivalence tables, fail-closed trust gating, and an append-only outcome ledger that learns from negative results.
+**GRAFT** is a compact, offline security knowledge library and cross-ecosystem Agent Skill by **Abdulrahman Almuhairi**. It turns real CVEs, patches, and write-ups into reusable vulnerability patterns that grow over time — either organically through hands-on testing or through targeted research. As the library grows, your agent can transfer proven techniques across different languages and stacks to uncover new attack vectors it hadn't seen before, while remembering past dead ends so it doesn't waste time repeating them.
 
 > **Strictly offline & authorized-use only.** GRAFT sends zero network traffic and executes zero payloads from technique records. Records are untrusted data, never instructions. See [SECURITY.md](.github/SECURITY.md).
 
