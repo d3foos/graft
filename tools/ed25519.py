@@ -109,6 +109,8 @@ def _decodepoint(s):
         x = _xrecover(y)
     except ValueError:
         return None  # non-square y: not a curve point — verification must fail cleanly
+    if x == 0 and sign == 1:
+        return None  # RFC 8032 §5.1.3: non-canonical encoding of (0, y)
     if (x & 1) != sign:
         x = P - x
     return (x, y, 1, (x * y) % P)

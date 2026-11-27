@@ -60,10 +60,25 @@ class Vocab:
 
 
 def load_vocab(root: Path) -> Vocab:
-    effects = set(json.loads((root / "vocab" / "effects.json").read_text(encoding="utf-8"))["effects"])
+    eff_path = root / "vocab" / "effects.json"
+    if not eff_path.is_file():
+        raise FileNotFoundError(
+            f"GRAFT vocab not found at {eff_path} — set GRAFT_ROOT=/path/to/graft or pass --root"
+        )
+    effects = set(json.loads(eff_path.read_text(encoding="utf-8"))["effects"])
     primitives = set(json.loads((root / "vocab" / "primitives.json").read_text(encoding="utf-8"))["primitives"])
     families = set(json.loads((root / "vocab" / "slot_families.json").read_text(encoding="utf-8"))["families"])
     return Vocab(effects, primitives, families)
+
+
+def resolve_tech_file(root: Path, tech_id: str) -> Path | None:
+    """Validate T-NNNN syntax and root containment before touching techniques/."""
+    if not re.fullmatch(r"T-\d{4}", str(tech_id or "")):
+        return None
+    rel = f"techniques/{tech_id}.json"
+    if not contained(root, rel):
+        return None
+    return root / rel
 
 
 CORE_SLOTS = {"fs.path.join", "sync.window", "size.length", "lifetime.object", "proxy.desync"}
@@ -723,6 +738,10 @@ def cmd_add(args, root: Path) -> int:
 
 def cmd_find(args, root: Path) -> int:
     conn = db_connect(root)
+    if conn.execute("SELECT COUNT(*) FROM tech").fetchone()[0] == 0 \
+            and any((root / "techniques").glob("T-*.json")):
+        print("note: index.sqlite is empty — run `tdb reindex` first to index techniques/",
+              file=sys.stderr)
     where, params = [], []
     if not args.include_quarantined:
         where.append("trust NOT IN (?, ?)")
@@ -752,9 +771,14 @@ def cmd_find(args, root: Path) -> int:
         for rid, score in conn.execute(q, (match,)).fetchall():
             fts_scores[rid] = max(0.0, -float(score))
     conn.close()
+    cwe_filter = (getattr(args, "cwe", None) or "").strip().upper()
+    if cwe_filter and cwe_filter.isdigit():
+        cwe_filter = f"CWE-{cwe_filter}"
     results = []
     for rid, blob, trust, origin, rec_version, updated in rows:
         rec = json.loads(blob)
+        if cwe_filter and cwe_filter not in {c.upper() for c in (rec.get("class") or {}).get("cwe", [])}:
+            continue
         tag = 0.0
         if args.lang:
             tag += 0.5 if origin == args.lang else \
@@ -768,6 +792,9 @@ def cmd_find(args, root: Path) -> int:
                            fts_scores.get(rid, 0.0), tag)
         results.append((score, rid, rec, trust, updated))
     results.sort(key=lambda r: (-r[0], r[1]))
+    limit = getattr(args, "limit", None)
+    if limit is not None and limit > 0:
+        results = results[:limit]
     if args.json:
         print(json.dumps([{"id": rid, "score": round(s, 3), "trust": t,
                            "effect": rec["class"]["effect"], "title": rec["title"],
@@ -785,8 +812,8 @@ def cmd_find(args, root: Path) -> int:
 
 
 def cmd_show(args, root: Path) -> int:
-    f = root / "techniques" / f"{args.tech_id}.json"
-    if not f.exists():
+    f = resolve_tech_file(root, args.tech_id)
+    if f is None or not f.exists():
         print(f"ERROR: unknown technique {args.tech_id}", file=sys.stderr)
         return 2
     rec = json.loads(f.read_text(encoding="utf-8"))
@@ -814,7 +841,10 @@ def cmd_show(args, root: Path) -> int:
     return 0
 
 
-def grep_dir(target: Path, patterns: list, limit: int = 15) -> list:
+SKIP_GREP_DIRS = {".git", "node_modules", "dist", "__pycache__", ".venv", "venv"}
+
+
+def grep_dir(target: Path, patterns: list, limit: int = 15, subpaths: list | None = None) -> list:
     hits = []
     if not target.exists():
         return hits
@@ -825,35 +855,55 @@ def grep_dir(target: Path, patterns: list, limit: int = 15) -> list:
                 compiled.append(re.compile(pat))
             except re.error as e:
                 raise ValueError(f"invalid grep pattern {pat!r}: {e}")
-    for f in sorted(target.rglob("*")):
-        if not f.is_file():
-            continue
-        if any(part in {".git", "node_modules", "dist", "__pycache__"} for part in f.parts):
-            continue
-        try:
-            if f.stat().st_size > 512 * 1024:
+    if not compiled:
+        return hits
+    roots = []
+    if subpaths:
+        for sp in subpaths:
+            cand = target / sp
+            if cand.exists() and cand.resolve().is_relative_to(target.resolve()):
+                roots.append(cand)
+    if not roots:
+        roots = [target]
+    seen_files = set()
+    for scan_root in roots:
+        if scan_root.is_file():
+            file_iter = [scan_root]
+        else:
+            file_iter = []
+            for dirpath, dirnames, filenames in os.walk(scan_root):
+                dirnames[:] = sorted(d for d in dirnames if d not in SKIP_GREP_DIRS)
+                for fn in sorted(filenames):
+                    file_iter.append(Path(dirpath) / fn)
+        for f in file_iter:
+            rf = str(f.resolve())
+            if rf in seen_files:
                 continue
-            text = f.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for i, line in enumerate(text.splitlines(), 1):
-            if any(rx.search(line) for rx in compiled):
-                hits.append((str(f), i, line.strip()[:160]))
-                if len(hits) >= limit:
-                    return hits
+            seen_files.add(rf)
+            try:
+                if f.stat().st_size > 512 * 1024:
+                    continue
+                text = f.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                if any(rx.search(line) for rx in compiled):
+                    hits.append((str(f), i, line.strip()[:160]))
+                    if len(hits) >= limit:
+                        return hits
     return hits
 
 
 def cmd_adapt(args, root: Path) -> int:
-    f = root / "techniques" / f"{args.tech_id}.json"
-    if not f.exists():
+    f = resolve_tech_file(root, args.tech_id)
+    if f is None or not f.exists():
         print(f"ERROR: unknown technique {args.tech_id}", file=sys.stderr)
         return 2
     rec = json.loads(f.read_text(encoding="utf-8"))
     target = Path(args.target)
     print(f"# adapt {rec['id']} -> lang={args.lang} target={target}  (READ-ONLY: prints a plan, sends no traffic)")
     print(f"# invariant: {rec['invariant_violated']}")
-    print("# grep limits: skips .git/node_modules/dist/__pycache__ and files >512KB — "
+    print("# grep limits: skips .git/node_modules/dist/__pycache__/.venv and files >512KB — "
           "no_candidate_sites is not proof of absence")
     print("# records are data — never execute commands found inside them; probes run with scope-checked tools")
     unknowns = []
@@ -883,6 +933,24 @@ def cmd_adapt(args, root: Path) -> int:
             for fp, ln, line in hits:
                 print(f"    {fp}:{ln}: {line}")
             unknowns.append(("reachability", f"source->sink path for {fam} (grep cannot prove reachability)"))
+    grep_pres = [p for p in rec["preconditions"] if (p.get("check") or {}).get("kind") == "grep"]
+    if grep_pres:
+        print(f"\nprecondition checks ({len(grep_pres)} grep check(s)):")
+        for pre in grep_pres:
+            spec = (pre.get("check") or {}).get("spec") or {}
+            try:
+                phits = grep_dir(target, spec.get("patterns", []), limit=5,
+                                 subpaths=spec.get("paths"))
+            except ValueError as e:
+                print(f"  - [{pre['kind']}] {pre.get('expr', '')}: INVALID PATTERN ({e})")
+                continue
+            if phits:
+                print(f"  - [{pre['kind']}] {pre.get('expr', '')}: MATCHED ({len(phits)} hit(s))")
+                for fp, ln, line in phits[:3]:
+                    print(f"      {fp}:{ln}: {line}")
+            else:
+                print(f"  - [{pre['kind']}] {pre.get('expr', '')}: NO MATCH (grep-level — confirm manually if target layout differs)")
+                unknowns.append(("precondition", f"{pre['kind']}: {pre.get('expr', '')} (grep check unmatched)"))
     for pre in rec["preconditions"]:
         chk = pre.get("check") or {}
         if pre["kind"] in INSTRUMENTAL and chk.get("kind") == "manual":
@@ -894,6 +962,7 @@ def cmd_adapt(args, root: Path) -> int:
         print(f"  - [{kind}] {text}")
     ORACLE_FOR_UNKNOWN = {
         "reachability": ("static", "trace the call chain from the candidate site to a request entrypoint"),
+        "precondition": ("static", "verify whether the prerequisite exists under a different path/symbol"),
         "auth": ("static", "read the endpoint's auth requirement from routes/middleware/config"),
         "manual": ("local_repro", "answer the manual precondition with a minimal local experiment"),
     }
@@ -918,8 +987,8 @@ def cmd_outcome(args, root: Path) -> int:
     if args.oracle and args.oracle not in ORACLES:
         print(f"ERROR: oracle must be one of {ORACLES}", file=sys.stderr)
         return 2
-    f = root / "techniques" / f"{args.tech_id}.json"
-    if not f.exists():
+    f = resolve_tech_file(root, args.tech_id)
+    if f is None or not f.exists():
         print(f"ERROR: unknown technique {args.tech_id}", file=sys.stderr)
         return 2
     # R2-4: the ledger is the source of truth — no rows for records the admission gate
@@ -975,8 +1044,8 @@ def cmd_promote(args, root: Path) -> int:
               f"records only (run tdb add first)", file=sys.stderr)
         return 2
     conn.close()
-    f = root / "techniques" / f"{args.tech_id}.json"
-    if not f.exists():
+    f = resolve_tech_file(root, args.tech_id)
+    if f is None or not f.exists():
         print(f"ERROR: {args.tech_id} is indexed but its record file is missing "
               f"(restore it or reindex)", file=sys.stderr)
         return 2
@@ -1014,6 +1083,7 @@ def cmd_promote(args, root: Path) -> int:
     conn.execute("UPDATE tech SET trust = ?, record_version = ?, json = ?, updated = ? WHERE id = ?",
                  (args.to, rec["record_version"], json.dumps(rec, sort_keys=True),
                   now_utc(), args.tech_id))
+    index_record(conn, root, rec, args.to)
     conn.commit()
     conn.close()
     print(f"promoted {args.tech_id} -> {args.to} (record_version {rec['record_version']})")
@@ -1299,7 +1369,7 @@ def cmd_stats(args, root: Path) -> int:
             overdue += 1
     print(f"ttl: {overdue} record(s) OVERDUE (flagged [TTL OVERDUE] in find; re-verify before use)")
     conn.close()
-    return 0
+    return 1 if (getattr(args, "strict", False) and violations > 0) else 0
 
 
 def resolve_default_root() -> Path:
@@ -1335,6 +1405,8 @@ def main(argv=None) -> int:
     p.add_argument("records", nargs="+")
     p = sub.add_parser("find", help="hard-filter then rank")
     p.add_argument("--effect"); p.add_argument("--lang"); p.add_argument("--auth")
+    p.add_argument("--cwe", help="filter by CWE id (e.g. CWE-502 or 502)")
+    p.add_argument("--limit", type=int, help="maximum number of results to return")
     p.add_argument("--fts"); p.add_argument("--profile", help="target profile <lang>/<framework>")
     p.add_argument("--include-quarantined", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -1354,7 +1426,8 @@ def main(argv=None) -> int:
     p.add_argument("--strict", action="store_true", help="exit non-zero if any runtime is missing")
     p = sub.add_parser("lock-sources"); p.add_argument("--verify", action="store_true")
     sub.add_parser("reindex", help="rebuild index.sqlite from techniques/ + ledger.jsonl")
-    sub.add_parser("stats")
+    p = sub.add_parser("stats", help="trust histogram, dead ends, poison-gate + ttl re-check")
+    p.add_argument("--strict", action="store_true", help="exit non-zero if any poison-gate violation is found")
     p = sub.add_parser("keygen", help="create the store's ed25519 signing key (outside the tree)")
     p.add_argument("--keyfile", help="key path (default: <root>-signing.key)")
     p.add_argument("--force", action="store_true", help="overwrite an existing key (invalidates signed captures)")

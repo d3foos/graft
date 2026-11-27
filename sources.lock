@@ -36,7 +36,7 @@
     "skills/graft/SKILL.md": "90743be5bef06f379a09631a8b4e851c0aaf82468f17f0a11c0a4e0cf42cf557",
     "skills/graft/assets/logo.svg": "2cd43cc84584cdc02db583a4d87974074eb6a942cf74b36bf64a41721581d403",
     "sources/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "sources/README.md": "5641bbd1c41e1b01494e615d4778fae721f75c76afda35149952ed7c680309aa",
+    "sources/README.md": "f46d33fff0b9d144ed2c5a8b1a3f6de3ccd99d589dbf2bca5ae9e5548b7452fa",
     "techniques/T-0001.json": "6525380f3382c515e3faa72cb55766d6948dde8bc631a91b1e30368f00785ed6",
     "techniques/T-0002.json": "880d9f33c07c4f1735ecc2470da27d3aa446c6525e54fa8e7e63eebfcfba27a5",
     "techniques/T-0003.json": "5414bc1b506b3ef225642a2ac82afa7d7723cae1388118e974e376a51313a65c",
@@ -166,11 +166,12 @@
     "tests/test_poison_gate.py": "85ab981f2f704212a5f75d076a0fbbc6a4952d3d680b22ce87e8045a861c37ba",
     "tests/test_retrieval.py": "6430e9239333870bdf53e4576db993efb826e41aa9a8caea1cd2b1d29102863e",
     "tests/test_review_fixes.py": "e7a06deddc9488a8dc2cada94faab708525bb118106d5163d78e30c026cd9a4e",
+    "tests/test_review_p1_p2.py": "8200bf69ecd284d92a5e89dc8ecb1985886f1f15319eec848d7aec3d356bb3e1",
     "tests/test_schema.py": "a0fdbdb21236d40091239677fdf40f168e0e7100f658ba1477be823784925405",
     "tests/test_tdb.py": "fffd3c22d8e32f16710e9ff00a3bf60a34ae58860318fe284be47cd78e47309f",
     "tools/__init__.py": "e85e3b2b0c7cafae5578fb6404ae7f2d68dacda18b5f60badcca0e12f8371139",
-    "tools/ed25519.py": "3fb1ede724ebf38ac9515fa76a1dad520a9fe1ab5573941928e10a5e3028fc78",
-    "tools/tdb.py": "bc4dde74aeac020810fa49ccaf088d9d5f291b6a086bda4629afc14ec9454da6",
+    "tools/ed25519.py": "2a248b93b26086da1f40235806bea8661543110ceb4637645a6ff98006726b5b",
+    "tools/tdb.py": "e6c2757d2bad4eaa1921f71bd104d597b8bd9b31ef869b07eeb1192dd0a8ee08",
     "vocab/effects.json": "13945cc73f89569b9799cf12fc62a5539493888ac4776afe31c91e065df0b30b",
     "vocab/equivalents/fs.path.join.json": "775278777b9fba623ad13e5c88126c86b32f2191f05057c4881bba6e0d5d08cd",
     "vocab/equivalents/sink.api.introspection.json": "946ec51af822a2ae50fc85725920d9afadb7aa2032d510443ea861791684db58",
@@ -186,5 +187,5 @@
     "vocab/primitives.json": "b2394ec253b6c4fffd738a6f9e7e19820c545f0245199c9dd4aa29c58ce5b5c1",
     "vocab/slot_families.json": "60653b660d6f65dfb0a05c14ed237989f7ca26cd58d91a6926f79560d6c3ff74"
   },
-  "generated": "2026-11-27T06:25:51Z"
+  "generated": "2026-11-27T06:35:13Z"
 }

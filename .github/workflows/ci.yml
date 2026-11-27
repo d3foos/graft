@@ -55,7 +55,7 @@ jobs:
         run: |
           python tools/tdb.py init
           python tools/tdb.py reindex
-          STATS_OUT=$(python tools/tdb.py stats)
+          STATS_OUT=$(python tools/tdb.py stats --strict)
           echo "$STATS_OUT"
           echo "$STATS_OUT" | grep -q "poison gate: OK"
 
